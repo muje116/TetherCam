@@ -1,0 +1,167 @@
+.app-container {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  padding: 16px;
+  gap: 16px;
+}
+
+.dashboard {
+  display: grid;
+  grid-template-columns: 280px 1fr;
+  gap: 16px;
+  flex: 1;
+  overflow: hidden;
+}
+
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.main-stage {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  overflow: hidden;
+}
+
+.focus-area {
+  flex: 1;
+  background: #000;
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.focused-stream {
+  width: 100%;
+  height: 100%;
+  position: relative;
+}
+
+.focus-controls {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  padding: 20px;
+  background: linear-gradient(transparent, rgba(0,0,0,0.8));
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+}
+
+.action-group {
+  display: flex;
+  gap: 10px;
+}
+
+.btn-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: rgba(255,255,255,0.1);
+  border: 1px solid rgba(255,255,255,0.2);
+  color: white;
+  font-size: 1.2rem;
+  cursor: pointer;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  transition: background 0.2s;
+}
+
+.btn-icon:hover {
+  background: var(--accent-primary);
+}
+
+.device-grid-mini {
+  height: 180px;
+  display: flex;
+  gap: 12px;
+  overflow-x: auto;
+  padding-bottom: 8px;
+}
+
+.device-card-mini {
+  min-width: 240px;
+  cursor: pointer;
+  border: 2px solid transparent;
+  transition: border-color 0.2s;
+}
+
+.device-card-mini.selected {
+  border-color: var(--accent-primary);
+}
+
+.mini-preview {
+  height: 120px;
+  background: #000;
+  border-radius: 8px 8px 0 0;
+  overflow: hidden;
+}
+
+.mini-info {
+  padding: 8px 12px;
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.75rem;
+}
+
+.platform-tag {
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+.device-item-mini {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px;
+  background: rgba(255,255,255,0.03);
+  border-radius: 4px;
+  margin-bottom: 4px;
+  font-size: 0.8rem;
+}
+
+.btn-primary-xs {
+  padding: 2px 8px;
+  font-size: 0.7rem;
+  background: var(--accent-primary);
+  border: none;
+  border-radius: 4px;
+  color: white;
+}
+
+.btn-secondary-sm {
+  width: 100%;
+  padding: 8px;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid var(--glass-border);
+  color: white;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.connect-url {
+  font-size: 0.75rem;
+  word-break: break-all;
+  color: var(--text-secondary);
+  margin: 8px 0 10px;
+}
+
+.usb-status {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  margin-bottom: 8px;
+}
+
+.search-status {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  margin: 8px 0;
+}
