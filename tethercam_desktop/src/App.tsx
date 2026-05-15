@@ -19,6 +19,7 @@ const App: React.FC = () => {
   const [selectedDeviceId, setSelectedDeviceId] = useState<string | null>(null);
   const [usbStatus, setUsbStatus] = useState<string>('USB not scanned');
   const [searchStatus, setSearchStatus] = useState<string>('');
+  const [diagnosticLogs, setDiagnosticLogs] = useState<string[]>([]);
 
   const scanUsbAndForward = async () => {
     const usbDevices = await window.electronAPI.getUsbDevices();
@@ -61,6 +62,8 @@ const App: React.FC = () => {
       if (activeDevices.length > 0) setSelectedDeviceId(activeDevices[0].id);
 
       await scanUsbAndForward();
+      const logs = await window.electronAPI.getDiagnosticLogs();
+      setDiagnosticLogs(logs.slice(-30));
     };
 
     init();
@@ -81,11 +84,15 @@ const App: React.FC = () => {
       setConnectedDevices(prev => prev.filter(d => d.id !== deviceId));
       if (selectedDeviceId === deviceId) setSelectedDeviceId(null);
     });
+    const removeDiag = window.electronAPI.onDiagnosticLog((line: string) => {
+      setDiagnosticLogs(prev => [...prev.slice(-29), line]);
+    });
 
     return () => {
       removeDiscovered();
       removeConnected();
       removeDisconnected();
+      removeDiag();
     };
   }, [selectedDeviceId]);
 
@@ -131,6 +138,19 @@ const App: React.FC = () => {
             <button className="btn-secondary-sm" onClick={async () => {
               await scanUsbAndForward();
             }}>Scan & Forward</button>
+          </section>
+
+          <section className="usb-section glass animate-fade">
+            <h3>Diagnostics</h3>
+            <div className="diagnostic-panel">
+              {diagnosticLogs.length === 0 ? (
+                <p className="search-status">No logs yet</p>
+              ) : (
+                diagnosticLogs.map((line, index) => (
+                  <p key={`${index}-${line}`} className="diag-line">{line}</p>
+                ))
+              )}
+            </div>
           </section>
         </aside>
 

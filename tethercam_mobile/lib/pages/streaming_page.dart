@@ -22,6 +22,7 @@ class _StreamingPageState extends State<StreamingPage> {
   
   bool _isStreaming = false;
   ConnectionStatus _status = ConnectionStatus.disconnected;
+  String? _lastSocketError;
 
   @override
   void initState() {
@@ -39,6 +40,13 @@ class _StreamingPageState extends State<StreamingPage> {
       if (mounted) {
         setState(() {
           _status = status;
+        });
+      }
+    });
+    _signalingClient.errorStream.listen((error) {
+      if (mounted) {
+        setState(() {
+          _lastSocketError = error;
         });
       }
     });
@@ -130,31 +138,49 @@ class _StreamingPageState extends State<StreamingPage> {
             top: 40,
             left: 20,
             right: 20,
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                  decoration: BoxDecoration(
-                    color: Colors.black54,
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  child: Row(
-                    children: [
-                      Icon(
-                        Icons.circle,
-                        size: 12,
-                        color: _status == ConnectionStatus.connected ? Colors.green : Colors.red,
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: Colors.black54,
+                        borderRadius: BorderRadius.circular(20),
                       ),
-                      const SizedBox(width: 8),
-                      Text('Status: ${_status.name}'),
-                    ],
+                      child: Row(
+                        children: [
+                          Icon(
+                            Icons.circle,
+                            size: 12,
+                            color: _status == ConnectionStatus.connected ? Colors.green : Colors.red,
+                          ),
+                          const SizedBox(width: 8),
+                          Text('Status: ${_status.name}'),
+                        ],
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.close, color: Colors.white),
+                      onPressed: () => Navigator.pop(context),
+                    ),
+                  ],
+                ),
+                if (_lastSocketError != null && _lastSocketError!.isNotEmpty)
+                  Container(
+                    margin: const EdgeInsets.only(top: 8),
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: Colors.red.withOpacity(0.7),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text(
+                      _lastSocketError!,
+                      style: const TextStyle(fontSize: 12),
+                    ),
                   ),
-                ),
-                IconButton(
-                  icon: const Icon(Icons.close, color: Colors.white),
-                  onPressed: () => Navigator.pop(context),
-                ),
               ],
             ),
           ),

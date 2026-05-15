@@ -10,12 +10,14 @@ class SignalingClient {
   WebSocketChannel? _channel;
   final StreamController<ConnectionStatus> _statusController = StreamController<ConnectionStatus>.broadcast();
   final StreamController<Map<String, dynamic>> _messageController = StreamController<Map<String, dynamic>>.broadcast();
+  final StreamController<String> _errorController = StreamController<String>.broadcast();
   String? _deviceId;
   String _connectionType = 'wifi';
   Timer? _connectTimeoutTimer;
 
   Stream<ConnectionStatus> get statusStream => _statusController.stream;
   Stream<Map<String, dynamic>> get messageStream => _messageController.stream;
+  Stream<String> get errorStream => _errorController.stream;
   String? get deviceId => _deviceId;
 
   Future<void> connect(String ip, int port) async {
@@ -29,6 +31,7 @@ class SignalingClient {
       _connectTimeoutTimer?.cancel();
       _connectTimeoutTimer = Timer(const Duration(seconds: 8), () {
         if (_deviceId == null) {
+          _errorController.add('Connection timed out after 8s to $url');
           _statusController.add(ConnectionStatus.error);
           disconnect();
         }
@@ -46,6 +49,7 @@ class SignalingClient {
           }
         },
         onError: (err) {
+          _errorController.add('WebSocket error: $err');
           _statusController.add(ConnectionStatus.error);
         },
         onDone: () {
@@ -57,6 +61,7 @@ class SignalingClient {
       // Send registration info
       await _register();
     } catch (e) {
+      _errorController.add('Connect failed: $e');
       _connectTimeoutTimer?.cancel();
       _statusController.add(ConnectionStatus.error);
     }

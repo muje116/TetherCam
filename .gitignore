@@ -1,0 +1,50 @@
+# OS/editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Node / Electron / Vite
+**/node_modules/
+**/dist/
+**/dist-electron/
+**/.vite/
+**/.vite-temp/
+**/coverage/
+
+# Flutter / Dart
+**/.dart_tool/
+**/.flutter-plugins
+**/.flutter-plugins-dependencies
+**/.packages
+**/build/
+**/pubspec.lock
+**/.metadata
+
+# Android
+**/android/.gradle/
+**/android/app/build/
+**/android/local.properties
+
+# iOS/macOS
+**/ios/Pods/
+**/ios/.symlinks/
+**/ios/Flutter/Flutter.framework
+**/ios/Flutter/Flutter.podspec
+**/macos/Pods/
+
+# Windows/Linux generated
+**/windows/flutter/ephemeral/
+**/linux/flutter/ephemeral/

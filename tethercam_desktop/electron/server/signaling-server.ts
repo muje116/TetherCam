@@ -92,6 +92,7 @@ export class SignalingServer extends EventEmitter {
     this.wss.on('connection', (ws: WebSocket, req) => {
       const clientIp = req.socket.remoteAddress?.replace('::ffff:', '') ?? 'unknown';
       console.log(`[SignalingServer] WebSocket connection from ${clientIp}`);
+      this.emit('log', `[SignalingServer] WebSocket connection from ${clientIp}`);
 
       let deviceId: string | null = null;
 
@@ -103,6 +104,7 @@ export class SignalingServer extends EventEmitter {
           });
         } catch (err) {
           console.error('[SignalingServer] Invalid message:', err);
+          this.emit('log', `[SignalingServer] Invalid message from ${clientIp}: ${String(err)}`);
           ws.send(JSON.stringify({ type: 'error', message: 'Invalid JSON' }));
         }
       });
@@ -112,10 +114,12 @@ export class SignalingServer extends EventEmitter {
           this.connectionManager.removeDevice(deviceId);
         }
         console.log(`[SignalingServer] WebSocket disconnected: ${clientIp}`);
+        this.emit('log', `[SignalingServer] WebSocket disconnected: ${clientIp}`);
       });
 
       ws.on('error', (err) => {
         console.error(`[SignalingServer] WebSocket error from ${clientIp}:`, err.message);
+        this.emit('log', `[SignalingServer] WebSocket error from ${clientIp}: ${err.message}`);
       });
 
       // Send server info on connect
@@ -155,6 +159,7 @@ export class SignalingServer extends EventEmitter {
           deviceId: device.id,
           message: 'Device registered successfully',
         }));
+        this.emit('log', `[SignalingServer] Registered device '${device.name}' from ${clientIp}`);
         break;
       }
 

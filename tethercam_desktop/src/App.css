@@ -165,3 +165,19 @@
   color: var(--text-secondary);
   margin: 8px 0;
 }
+
+.diagnostic-panel {
+  max-height: 180px;
+  overflow-y: auto;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 8px;
+  padding: 8px;
+}
+
+.diag-line {
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+  margin-bottom: 4px;
+  word-break: break-word;
+}

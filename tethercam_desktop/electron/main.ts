@@ -21,8 +21,18 @@ let connectionManager: ConnectionManager | null = null;
 let discoveryService: DiscoveryService | null = null;
 let mediaPipeline: MediaPipeline | null = null;
 let usbService: UsbService | null = null;
+const diagnosticLogs: string[] = [];
 
 const SIGNALING_PORT = 4747;
+
+function pushDiagnosticLog(message: string) {
+  const line = `${new Date().toISOString()} ${message}`;
+  diagnosticLogs.push(line);
+  if (diagnosticLogs.length > 200) {
+    diagnosticLogs.shift();
+  }
+  mainWindow?.webContents.send('diagnostic-log', line);
+}
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -100,27 +110,37 @@ async function startServices() {
   discoveryService.start();
 
   console.log(`[TetherCam] Signaling and Discovery services running`);
+  pushDiagnosticLog('[TetherCam] Signaling and Discovery services running');
 
   // Forward connection events to the renderer
   connectionManager.on('device-connected', (device) => {
     mainWindow?.webContents.send('device-connected', device);
+    pushDiagnosticLog(`[Connection] Device connected: ${device.name} (${device.ip})`);
   });
 
   discoveryService.on('device-discovered', (device) => {
     mainWindow?.webContents.send('device-discovered', device);
+    pushDiagnosticLog(`[Discovery] Found ${device.name} at ${device.ip}:${device.port}`);
   });
 
   // Forward signaling messages
   signalingServer!.on('sdp-offer', (data) => {
     mainWindow?.webContents.send('sdp-offer', data);
+    pushDiagnosticLog(`[Signaling] SDP offer from ${data.clientIp ?? 'unknown'}`);
   });
 
   signalingServer!.on('ice-candidate', (data) => {
     mainWindow?.webContents.send('ice-candidate', data);
+    pushDiagnosticLog(`[Signaling] ICE candidate from ${data.clientIp ?? 'unknown'}`);
+  });
+
+  signalingServer!.on('log', (line) => {
+    pushDiagnosticLog(String(line));
   });
 
   connectionManager.on('device-disconnected', (deviceId) => {
     mainWindow?.webContents.send('device-disconnected', deviceId);
+    pushDiagnosticLog(`[Connection] Device disconnected: ${deviceId}`);
   });
 
   connectionManager.on('device-updated', (device) => {
@@ -166,12 +186,18 @@ function setupIpcHandlers() {
   });
 
   ipcMain.handle('enable-usb-forwarding', async (_event, deviceId: string) => {
-    return await usbService?.enableForwarding(deviceId, 4747, 4747) ?? false;
+    const ok = await usbService?.enableForwarding(deviceId, 4747, 4747) ?? false;
+    pushDiagnosticLog(`[USB] Forwarding for ${deviceId}: ${ok ? 'ok' : 'failed'}`);
+    return ok;
   });
 
   ipcMain.handle('get-connection-url', () => {
     const primaryAddr = signalingServer?.getPrimaryLocalAddress() ?? '127.0.0.1';
     return `ws://${primaryAddr}:${SIGNALING_PORT}`;
+  });
+
+  ipcMain.handle('get-diagnostic-logs', () => {
+    return diagnosticLogs;
   });
 }
 

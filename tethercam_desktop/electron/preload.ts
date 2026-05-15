@@ -40,6 +40,7 @@ const electronAPI = {
   disconnectDevice: (deviceId: string): Promise<void> => ipcRenderer.invoke('disconnect-device', deviceId),
   getUsbDevices: (): Promise<any[]> => ipcRenderer.invoke('get-usb-devices'),
   enableUsbForwarding: (deviceId: string): Promise<boolean> => ipcRenderer.invoke('enable-usb-forwarding', deviceId),
+  getDiagnosticLogs: (): Promise<string[]> => ipcRenderer.invoke('get-diagnostic-logs'),
 
   // Remote control
   sendCommand: (deviceId: string, command: string, payload?: unknown): Promise<void> =>
@@ -86,6 +87,12 @@ const electronAPI = {
     const listener = (_event: Electron.IpcRendererEvent, data: any) => callback(data);
     ipcRenderer.on('ice-candidate', listener);
     return () => ipcRenderer.removeListener('ice-candidate', listener);
+  },
+
+  onDiagnosticLog: (callback: (line: string) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, line: string) => callback(line);
+    ipcRenderer.on('diagnostic-log', listener);
+    return () => ipcRenderer.removeListener('diagnostic-log', listener);
   },
 };
 

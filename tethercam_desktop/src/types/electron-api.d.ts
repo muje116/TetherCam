@@ -37,6 +37,7 @@ declare global {
     disconnectDevice: (deviceId: string) => Promise<void>;
     getUsbDevices: () => Promise<UsbDevice[]>;
     enableUsbForwarding: (deviceId: string) => Promise<boolean>;
+    getDiagnosticLogs: () => Promise<string[]>;
     sendCommand: (deviceId: string, command: string, payload?: unknown) => Promise<void>;
     onDeviceConnected: (callback: (device: DeviceInfo) => void) => () => void;
     onDeviceDiscovered: (callback: (device: { name: string; ip: string; port: number }) => void) => () => void;
@@ -45,6 +46,7 @@ declare global {
     onStreamStats: (callback: (stats: unknown) => void) => () => void;
     onSdpOffer: (callback: (data: { deviceId?: string; clientIp?: string; sdp: string }) => void) => () => void;
     onIceCandidate: (callback: (data: { deviceId?: string; clientIp?: string; candidate: RTCIceCandidateInit }) => void) => () => void;
+    onDiagnosticLog: (callback: (line: string) => void) => () => void;
   }
 
   interface Window {
