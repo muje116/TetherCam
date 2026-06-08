@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Default: no cleartext. Loopback is allowed here for USB (ADB) mode.
+  RFC1918 / link-local hosts are permitted at runtime via PrivateNetworkSecurity
+  (NetworkSecurityPolicy wrapper) because Android XML cannot express IP ranges.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">localhost</domain>
+        <domain includeSubdomains="false">127.0.0.1</domain>
+    </domain-config>
+</network-security-config>

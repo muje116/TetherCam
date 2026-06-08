@@ -5,6 +5,7 @@ import '../services/signaling_client.dart';
 import '../services/webrtc_service.dart';
 import '../services/discovery_service.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
+import '../services/notification_service.dart';
 
 class StreamingPage extends StatefulWidget {
   final DiscoveredDesktop desktop;
@@ -19,11 +20,34 @@ class _StreamingPageState extends State<StreamingPage> {
   final CameraService _cameraService = CameraService();
   final SignalingClient _signalingClient = SignalingClient();
   late WebRTCService _webRTCService;
-  
+
   bool _isStreaming = false;
   ConnectionStatus _status = ConnectionStatus.disconnected;
   String? _lastSocketError;
+  bool _showQuickSettings = false;
+  double _zoomSliderValue = 1.0;
+  int _selectedResolutionIndex = 2;
+  int _selectedFpsIndex = 1;
+  int _selectedBitrateIndex = 2;
+  String? _latencyMs;
+  String? _streamFps;
 
+  static const _resolutions = ['480p', '720p', '1080p', '4K'];
+  static const _resolutionValues = [
+    ResolutionPreset.medium,
+    ResolutionPreset.high,
+    ResolutionPreset.veryHigh,
+    ResolutionPreset.max,
+  ];
+  static const _resSizes = [
+    StreamConfig(width: 640, height: 480),
+    StreamConfig(width: 1280, height: 720),
+    StreamConfig(width: 1920, height: 1080),
+    StreamConfig(width: 3840, height: 2160),
+  ];
+  static const _fpsOptions = [15, 24, 30, 60];
+  static const _bitrateOptions = [1000, 2500, 4000, 8000, 16000];
+  static const _bitrateLabels = ['1 Mbps', '2.5 Mbps', '4 Mbps', '8 Mbps', '16 Mbps'];
   @override
   void initState() {
     super.initState();
@@ -35,7 +59,7 @@ class _StreamingPageState extends State<StreamingPage> {
   Future<void> _initialize() async {
     await _cameraService.initialize();
     if (mounted) setState(() {});
-    
+
     _signalingClient.statusStream.listen((status) {
       if (mounted) {
         setState(() {
@@ -71,7 +95,8 @@ class _StreamingPageState extends State<StreamingPage> {
             if (mounted) setState(() {});
             break;
           case 'toggle-torch':
-            // TODO: Implement torch in camera_service
+            await _cameraService.toggleTorch();
+            if (mounted) setState(() {});
             break;
           case 'toggle-camera-state':
             await _cameraService.toggleCameraState(payloadMap['enabled'] ?? true);
@@ -80,7 +105,31 @@ class _StreamingPageState extends State<StreamingPage> {
             await _cameraService.toggleMicState(payloadMap['enabled'] ?? true);
             break;
           case 'set-resolution':
-            // TODO: Implement resolution change
+            final resStr = payloadMap['resolution'] as String?;
+            if (resStr != null) {
+              final idx = _resolutions.indexOf(resStr);
+              if (idx >= 0) {
+                await _cameraService.setResolutionPreset(_resolutionValues[idx]);
+                _updateStreamConfig();
+              }
+            }
+            break;
+          case 'set-fps':
+            final fps = payloadMap['fps'] as int?;
+            if (fps != null) {
+              final idx = _fpsOptions.indexOf(fps);
+              if (idx >= 0) {
+                setState(() => _selectedFpsIndex = idx);
+                _updateStreamConfig();
+              }
+            }
+            break;
+          case 'set-bitrate':
+            final bitrate = payloadMap['bitrate'] as int?;
+            if (bitrate != null && _bitrateOptions.contains(bitrate)) {
+              setState(() => _selectedBitrateIndex = _bitrateOptions.indexOf(bitrate));
+              _updateStreamConfig();
+            }
             break;
           case 'sdp-answer':
             final sdp = payload is String ? payload : (payloadMap['sdp'] as String? ?? '');
@@ -93,17 +142,46 @@ class _StreamingPageState extends State<StreamingPage> {
               await _webRTCService.handleIceCandidate(payloadMap);
             }
             break;
+          case 'stream-stats':
+            setState(() {
+              _latencyMs = '${payloadMap['latencyMs'] ?? '--'} ms';
+              _streamFps = '${payloadMap['fps'] ?? '--'}';
+            });
+            break;
         }
       }
     });
+  }
+
+  void _updateStreamConfig() {
+    final res = _resSizes[_selectedResolutionIndex];
+    _webRTCService.updateConfig(StreamConfig(
+      width: res.width,
+      height: res.height,
+      fps: _fpsOptions[_selectedFpsIndex],
+      bitrate: _bitrateOptions[_selectedBitrateIndex],
+    ));
   }
 
   void _toggleStream() async {
     if (_status != ConnectionStatus.connected) return;
     if (_isStreaming) {
       await _webRTCService.stop();
+      await NotificationService.cancelStreamingNotification();
     } else {
+      _updateStreamConfig();
       await _webRTCService.startStreaming();
+      await NotificationService.showStreamingNotification();
+      _signalingClient.send({
+        'type': 'device-status',
+        'deviceId': _signalingClient.deviceId,
+        'streamSettings': {
+          'resolution': _resolutions[_selectedResolutionIndex],
+          'fps': _fpsOptions[_selectedFpsIndex],
+          'bitrate': _bitrateOptions[_selectedBitrateIndex],
+          'codec': 'H.264',
+        },
+      });
     }
     setState(() {
       _isStreaming = !_isStreaming;
@@ -128,12 +206,19 @@ class _StreamingPageState extends State<StreamingPage> {
     return Scaffold(
       body: Stack(
         children: [
-          // Camera Preview
-          Positioned.fill(
+          GestureDetector(
+            onTapUp: (details) {
+              final size = MediaQuery.of(context).size;
+              final x = details.localPosition.dx / size.width;
+              final y = details.localPosition.dy / size.height;
+              _cameraService.setFocusPoint(x, y);
+            },
+            onDoubleTap: () {
+              _cameraService.resetFocus();
+            },
             child: CameraPreview(_cameraService.controller!),
           ),
 
-          // HUD Overlay
           Positioned(
             top: 40,
             left: 20,
@@ -162,9 +247,33 @@ class _StreamingPageState extends State<StreamingPage> {
                         ],
                       ),
                     ),
-                    IconButton(
-                      icon: const Icon(Icons.close, color: Colors.white),
-                      onPressed: () => Navigator.pop(context),
+                    Row(
+                      children: [
+                        if (_isStreaming && _streamFps != null)
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: Colors.black54,
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Text('$_streamFps FPS', style: const TextStyle(fontSize: 12)),
+                          ),
+                        const SizedBox(width: 8),
+                        if (_isStreaming && _latencyMs != null)
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: Colors.black54,
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Text('$_latencyMs', style: const TextStyle(fontSize: 12)),
+                          ),
+                        const SizedBox(width: 8),
+                        IconButton(
+                          icon: const Icon(Icons.close, color: Colors.white),
+                          onPressed: () => Navigator.pop(context),
+                        ),
+                      ],
                     ),
                   ],
                 ),
@@ -185,45 +294,173 @@ class _StreamingPageState extends State<StreamingPage> {
             ),
           ),
 
-          // Controls
+          if (_showQuickSettings) _buildQuickSettingsPanel(),
+
+          if (_cameraService.maxZoom > 1.0)
+            Positioned(
+              left: 20,
+              top: 0,
+              bottom: 0,
+              child: RotatedBox(
+                quarterTurns: -1,
+                child: SizedBox(
+                  width: 200,
+                  child: Slider(
+                    value: _zoomSliderValue,
+                    min: 1.0,
+                    max: _cameraService.maxZoom,
+                    divisions: ((_cameraService.maxZoom - 1.0) * 10).round().clamp(1, 100),
+                    label: '${_zoomSliderValue.toStringAsFixed(1)}x',
+                    onChanged: (v) {
+                      setState(() => _zoomSliderValue = v);
+                      _cameraService.setZoom(v);
+                    },
+                  ),
+                ),
+              ),
+            ),
+
           Positioned(
             bottom: 40,
             left: 0,
             right: 0,
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+            child: Column(
               children: [
-                _ControlButton(
-                  icon: Icons.flip_camera_android,
-                  onPressed: () async {
-                    await _cameraService.toggleCamera();
-                    setState(() {});
-                  },
-                ),
-                GestureDetector(
-                  onTap: _toggleStream,
-                  child: Container(
-                    width: 80,
-                    height: 80,
-                    decoration: BoxDecoration(
-                      color: _isStreaming ? Colors.red : Colors.white,
-                      shape: BoxShape.circle,
-                      border: Border.all(color: Colors.white, width: 4),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    _ControlButton(
+                      icon: Icons.tune,
+                      onPressed: () => setState(() => _showQuickSettings = !_showQuickSettings),
                     ),
-                    child: Icon(
-                      _isStreaming ? Icons.stop : Icons.videocam,
-                      size: 40,
-                      color: _isStreaming ? Colors.white : Colors.black,
-                    ),
-                  ),
+                  ],
                 ),
-                _ControlButton(
-                  icon: Icons.flash_on,
-                  onPressed: () {
-                    // TODO: Implement torch
-                  },
+                const SizedBox(height: 12),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                  children: [
+                    _ControlButton(
+                      icon: Icons.flip_camera_android,
+                      onPressed: () async {
+                        await _cameraService.toggleCamera();
+                        setState(() {});
+                      },
+                    ),
+                    GestureDetector(
+                      onTap: _toggleStream,
+                      child: Container(
+                        width: 80,
+                        height: 80,
+                        decoration: BoxDecoration(
+                          color: _isStreaming ? Colors.red : Colors.white,
+                          shape: BoxShape.circle,
+                          border: Border.all(color: Colors.white, width: 4),
+                        ),
+                        child: Icon(
+                          _isStreaming ? Icons.stop : Icons.videocam,
+                          size: 40,
+                          color: _isStreaming ? Colors.white : Colors.black,
+                        ),
+                      ),
+                    ),
+                    _ControlButton(
+                      icon: _cameraService.torchEnabled ? Icons.flash_on : Icons.flash_off,
+                      onPressed: () async {
+                        await _cameraService.toggleTorch();
+                        setState(() {});
+                      },
+                    ),
+                  ],
                 ),
               ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildQuickSettingsPanel() {
+    return Positioned(
+      bottom: 140,
+      left: 20,
+      right: 20,
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: Colors.black87,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: Colors.white24),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text('Quick Settings', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                IconButton(
+                  icon: const Icon(Icons.close, size: 20),
+                  onPressed: () => setState(() => _showQuickSettings = false),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            _buildSettingRow('Resolution', _resolutions, _selectedResolutionIndex, (i) {
+              setState(() => _selectedResolutionIndex = i);
+              _cameraService.setResolutionPreset(_resolutionValues[i]);
+              _updateStreamConfig();
+            }),
+            _buildSettingRow('FPS', _fpsOptions.map((f) => '$f').toList(), _selectedFpsIndex, (i) {
+              setState(() => _selectedFpsIndex = i);
+              _updateStreamConfig();
+            }),
+            _buildSettingRow('Bitrate', _bitrateLabels, _selectedBitrateIndex, (i) {
+              setState(() => _selectedBitrateIndex = i);
+              _updateStreamConfig();
+            }),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSettingRow(String label, List<String> options, int selected, ValueChanged<int> onChanged) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 80,
+            child: Text('$label: ', style: const TextStyle(fontSize: 13)),
+          ),
+          Expanded(
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: List.generate(options.length, (i) {
+                  final isSelected = i == selected;
+                  return Padding(
+                    padding: const EdgeInsets.only(right: 6),
+                    child: GestureDetector(
+                      onTap: () => onChanged(i),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: isSelected ? Colors.indigo : Colors.white12,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: isSelected ? Colors.indigoAccent : Colors.white24),
+                        ),
+                        child: Text(
+                          options[i],
+                          style: TextStyle(fontSize: 12, color: isSelected ? Colors.white : Colors.white70),
+                        ),
+                      ),
+                    ),
+                  );
+                }),
+              ),
             ),
           ),
         ],

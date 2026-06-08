@@ -3,8 +3,17 @@ import http from 'node:http';
 import { WebSocketServer, WebSocket } from 'ws';
 import cors from 'cors';
 import os from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { EventEmitter } from 'node:events';
 import { ConnectionManager } from './connection-manager.js';
+
+let _dirname = '';
+try {
+  _dirname = __dirname;
+} catch (e) {
+  _dirname = path.dirname(fileURLToPath(import.meta.url));
+}
 
 interface SignalingMessage {
   type: string;
@@ -31,6 +40,7 @@ export class SignalingServer extends EventEmitter {
     this.wss = new WebSocketServer({ server: this.server });
 
     this.setupHttpRoutes();
+    this.setupStaticRoutes();
     this.setupWebSocket();
   }
 
@@ -86,6 +96,22 @@ export class SignalingServer extends EventEmitter {
   }
 
   /**
+   * Serve static built files from the /dist folder.
+   */
+  private setupStaticRoutes(): void {
+    const distPath = path.join(_dirname, '../../dist');
+    this.app.use(express.static(distPath));
+
+    // Wildcard fallback to serve index.html for React SPA
+    this.app.get('*', (req, res, next) => {
+      if (req.path.startsWith('/api')) {
+        return next();
+      }
+      res.sendFile(path.join(distPath, 'index.html'));
+    });
+  }
+
+  /**
    * WebSocket handler for real-time signaling and control.
    */
   private setupWebSocket(): void {
@@ -129,6 +155,16 @@ export class SignalingServer extends EventEmitter {
         platform: process.platform,
         version: '1.0.0',
       }));
+
+      // Start ping/pong keepalive
+      const pingInterval = setInterval(() => {
+        if (ws.readyState === ws.OPEN) {
+          ws.ping();
+        }
+      }, 15000);
+      ws.on('pong', () => {});
+      ws.on('close', () => clearInterval(pingInterval));
+      ws.on('error', () => clearInterval(pingInterval));
     });
   }
 

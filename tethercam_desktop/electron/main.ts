@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage } from 'electron';
+import { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, screen } from 'electron';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { SignalingServer } from './server/signaling-server.js';
@@ -15,6 +15,7 @@ try {
 }
 
 let mainWindow: BrowserWindow | null = null;
+let projectorWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let signalingServer: SignalingServer | null = null;
 let connectionManager: ConnectionManager | null = null;
@@ -176,10 +177,40 @@ function setupIpcHandlers() {
   ipcMain.handle('start-virtual-camera', async (_event, deviceId: string, offer: string) => {
     if (mediaPipeline) {
       const answer = await mediaPipeline.createPeerConnection(offer);
+      pushDiagnosticLog(`[Virtual Camera] Started background WebRTC stream for ${deviceId}`);
       return answer;
     }
     throw new Error('Media pipeline not initialized');
   });
+
+  ipcMain.handle('capture-snapshot', async (_event, deviceId: string) => {
+    pushDiagnosticLog(`[Snapshot] Capture requested for ${deviceId}`);
+    mainWindow?.webContents.send('capture-snapshot-request', deviceId);
+    return true;
+  });
+
+  ipcMain.handle('save-snapshot', async (_event, dataUrl: string) => {
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const filename = `TetherCam_snapshot_${timestamp}.png`;
+    const { app } = await import('electron');
+    const picturesPath = app.getPath('pictures');
+    const filePath = path.join(picturesPath, filename);
+    const base64Data = dataUrl.replace(/^data:image\/png;base64,/, '');
+    const fs = await import('node:fs');
+    fs.writeFileSync(filePath, base64Data, 'base64');
+    pushDiagnosticLog(`[Snapshot] Saved to ${filePath}`);
+    return filePath;
+  });
+
+  ipcMain.handle('stop-virtual-camera', async () => {
+    if (mediaPipeline) {
+      mediaPipeline.stop();
+      pushDiagnosticLog('[Virtual Camera] Stopped stream and background pipeline');
+      return true;
+    }
+    return false;
+  });
+
 
   ipcMain.handle('get-usb-devices', async () => {
     return await usbService?.getConnectedDevices() ?? [];
@@ -198,6 +229,93 @@ function setupIpcHandlers() {
 
   ipcMain.handle('get-diagnostic-logs', () => {
     return diagnosticLogs;
+  });
+
+  // Projector Window Management IPCs
+  ipcMain.handle('open-projector', (_event, deviceId: string) => {
+    if (projectorWindow) {
+      projectorWindow.focus();
+      return;
+    }
+
+    projectorWindow = new BrowserWindow({
+      width: 640,
+      height: 360,
+      minWidth: 320,
+      minHeight: 180,
+      frame: false,
+      transparent: false,
+      alwaysOnTop: true,
+      backgroundColor: '#0a0a0f',
+      webPreferences: {
+        preload: path.join(_dirname, 'preload.js'),
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: false,
+      },
+    });
+
+    if (process.env.VITE_DEV_SERVER_URL) {
+      projectorWindow.loadURL(`${process.env.VITE_DEV_SERVER_URL}?projector=true&deviceId=${deviceId}`);
+    } else {
+      const fileUrl = new URL(`file://${path.join(_dirname, '../dist/index.html')}`);
+      fileUrl.searchParams.set('projector', 'true');
+      fileUrl.searchParams.set('deviceId', deviceId);
+      projectorWindow.loadURL(fileUrl.toString());
+    }
+
+    projectorWindow.on('closed', () => {
+      projectorWindow = null;
+    });
+  });
+
+  ipcMain.handle('close-projector', () => {
+    if (projectorWindow) {
+      projectorWindow.close();
+      projectorWindow = null;
+    }
+  });
+
+  ipcMain.handle('toggle-projector-always-on-top', () => {
+    if (projectorWindow) {
+      const state = !projectorWindow.isAlwaysOnTop();
+      projectorWindow.setAlwaysOnTop(state, 'screen-saver');
+      return state;
+    }
+    return false;
+  });
+
+  ipcMain.handle('resize-projector', (_event, width: number, height: number) => {
+    if (projectorWindow) {
+      projectorWindow.setSize(width, height, true);
+    }
+  });
+
+  ipcMain.handle('snap-projector', (_event, position: 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right') => {
+    if (!projectorWindow) return;
+
+    const primaryDisplay = screen.getPrimaryDisplay();
+    const { x, y, width, height } = primaryDisplay.workArea;
+    const winBounds = projectorWindow.getBounds();
+
+    let newX = x;
+    let newY = y;
+
+    if (position === 'top-left') {
+      newX = x;
+      newY = y;
+    } else if (position === 'top-right') {
+      newX = x + width - winBounds.width;
+      newY = y;
+    } else if (position === 'bottom-left') {
+      newX = x;
+      newY = y + height - winBounds.height;
+    } else if (position === 'bottom-right') {
+      newX = x + width - winBounds.width;
+      newY = y + height - winBounds.height;
+    }
+
+    projectorWindow.setBounds({ x: newX, y: newY, width: winBounds.width, height: winBounds.height }, true);
   });
 }
 

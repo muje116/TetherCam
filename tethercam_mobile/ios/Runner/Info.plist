@@ -66,5 +66,11 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>TetherCam connects to your computer on the local network for camera streaming and signaling.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_TetherCam._tcp</string>
+	</array>
 </dict>
 </plist>

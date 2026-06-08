@@ -181,3 +181,264 @@
   margin-bottom: 4px;
   word-break: break-word;
 }
+
+/* Projector Styles */
+.projector-stage {
+  width: 100vw;
+  height: 100vh;
+  position: relative;
+  background: #000;
+  overflow: hidden;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.projector-stage .stream-receiver {
+  width: 100%;
+  height: 100%;
+}
+
+.projector-stage .live-video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.projector-overlay-container {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 12px;
+  z-index: 10000;
+}
+
+.projector-drag-handle {
+  pointer-events: auto;
+  align-self: center;
+  background: rgba(10, 10, 15, 0.75);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 20px;
+  padding: 6px 16px;
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 0.75rem;
+  font-weight: 500;
+  cursor: move;
+  opacity: 0;
+  transform: translateY(-10px);
+  transition: opacity 0.2s, transform 0.2s;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.projector-stage:hover .projector-drag-handle {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.projector-controls {
+  pointer-events: auto;
+  align-self: center;
+  background: rgba(10, 10, 15, 0.85);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 30px;
+  padding: 8px 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  opacity: 0;
+  transform: translateY(10px);
+  transition: opacity 0.25s, transform 0.25s;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+
+.projector-stage:hover .projector-controls {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.btn-control-icon {
+  background: transparent;
+  border: none;
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 1.1rem;
+  cursor: pointer;
+  padding: 4px;
+  transition: color 0.15s, transform 0.1s;
+}
+
+.btn-control-icon:hover {
+  color: var(--accent-primary, #6366f1);
+  transform: scale(1.1);
+}
+
+.btn-control-icon.active {
+  color: var(--accent-primary, #6366f1);
+}
+
+.snap-group, .size-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  border-left: 1px solid rgba(255, 255, 255, 0.1);
+  padding-left: 10px;
+}
+
+.btn-control-mini {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: white;
+  border-radius: 4px;
+  width: 24px;
+  height: 24px;
+  font-size: 0.75rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s;
+}
+
+.btn-control-mini:hover {
+  background: rgba(99, 102, 241, 0.2);
+  border-color: rgba(99, 102, 241, 0.4);
+}
+
+.btn-control-text {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.8);
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 0.7rem;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.btn-control-text:hover {
+  background: rgba(99, 102, 241, 0.2);
+  color: white;
+  border-color: rgba(99, 102, 241, 0.4);
+}
+
+.btn-control-close {
+  background: rgba(239, 68, 68, 0.15);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  color: #ef4444;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.75rem;
+  transition: background 0.15s, color 0.15s;
+}
+
+.btn-control-close:hover {
+  background: rgba(239, 68, 68, 0.3);
+  color: white;
+}
+
+/* OBS/vMix Panel Styles */
+.obs-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.btn-virtual-cam {
+  width: 100%;
+  padding: 10px;
+  border-radius: 6px;
+  border: 1px solid rgba(16, 185, 129, 0.4);
+  background: rgba(16, 185, 129, 0.1);
+  color: #10b981;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s;
+  margin-top: 4px;
+}
+
+.btn-virtual-cam:hover {
+  background: rgba(16, 185, 129, 0.2);
+  color: white;
+}
+
+.btn-virtual-cam.active {
+  background: rgba(239, 68, 68, 0.15);
+  border-color: rgba(239, 68, 68, 0.4);
+  color: #ef4444;
+}
+
+.btn-virtual-cam.active:hover {
+  background: rgba(239, 68, 68, 0.25);
+  color: white;
+}
+
+.integration-help {
+  font-size: 0.72rem;
+  line-height: 1.4;
+  color: var(--text-secondary);
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 6px;
+  padding: 8px;
+  margin: 4px 0 0 0;
+}
+
+.integration-help code {
+  color: #a5b4fc;
+}
+
+.stream-stats-overlay {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(6px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  padding: 8px 12px;
+  display: flex;
+  gap: 12px;
+  font-size: 0.72rem;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  color: #a5b4fc;
+  z-index: 10;
+}
+
+.device-stats {
+  display: flex;
+  gap: 12px;
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+  margin-top: 4px;
+}
+
+.loading-overlay {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+}
+
+.live-video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #000;
+}
+

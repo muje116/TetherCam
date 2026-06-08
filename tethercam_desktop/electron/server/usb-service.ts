@@ -46,20 +46,40 @@ export class UsbService extends EventEmitter {
 
   async enableForwarding(deviceId: string, localPort: number, remotePort: number): Promise<boolean> {
     try {
+      // Forward: PC port -> Phone port
       await execAsync(`adb -s ${deviceId} forward tcp:${localPort} tcp:${remotePort}`);
-      console.log(`[UsbService] Port forwarding enabled: ${localPort} -> ${remotePort} for device ${deviceId}`);
+      console.log(`[UsbService] ADB Forward enabled: tcp:${localPort} -> tcp:${remotePort}`);
+      
+      // Reverse: Phone port -> PC port (Required for phone WebSocket client to connect to localhost)
+      try {
+        await execAsync(`adb -s ${deviceId} reverse tcp:${localPort} tcp:${remotePort}`);
+        console.log(`[UsbService] ADB Reverse enabled: tcp:${localPort} -> tcp:${remotePort}`);
+      } catch (revErr) {
+        console.warn(`[UsbService] Warning setting up ADB reverse (unsupported on very old Android versions):`, revErr);
+      }
+      
       return true;
     } catch (err) {
-      console.error('[UsbService] Error setting up port forwarding:', err);
+      console.error('[UsbService] Error setting up USB port forwarding:', err);
       return false;
     }
   }
 
-  async disableForwarding(localPort: number): Promise<void> {
+  async disableForwarding(localPort: number, deviceId?: string): Promise<void> {
     try {
-      await execAsync(`adb forward --remove tcp:${localPort}`);
+      const devArg = deviceId ? `-s ${deviceId} ` : '';
+      await execAsync(`adb ${devArg} forward --remove tcp:${localPort}`);
+      console.log(`[UsbService] Removed ADB Forward for tcp:${localPort}`);
     } catch (err) {
-      console.error('[UsbService] Error removing port forwarding:', err);
+      console.error('[UsbService] Error removing ADB Forward:', err);
+    }
+    
+    try {
+      const devArg = deviceId ? `-s ${deviceId} ` : '';
+      await execAsync(`adb ${devArg} reverse --remove tcp:${localPort}`);
+      console.log(`[UsbService] Removed ADB Reverse for tcp:${localPort}`);
+    } catch (err) {
+      console.error('[UsbService] Error removing ADB Reverse:', err);
     }
   }
 }

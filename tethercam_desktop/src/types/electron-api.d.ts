@@ -39,14 +39,24 @@ declare global {
     enableUsbForwarding: (deviceId: string) => Promise<boolean>;
     getDiagnosticLogs: () => Promise<string[]>;
     sendCommand: (deviceId: string, command: string, payload?: unknown) => Promise<void>;
+    startVirtualCamera: (deviceId: string, offer: string) => Promise<string>;
+    stopVirtualCamera: () => Promise<boolean>;
+    captureSnapshot: (deviceId: string) => Promise<boolean>;
+    saveSnapshot: (dataUrl: string) => Promise<string>;
+    openProjector: (deviceId: string) => Promise<void>;
+    closeProjector: () => Promise<void>;
+    toggleProjectorAlwaysOnTop: () => Promise<boolean>;
+    resizeProjector: (width: number, height: number) => Promise<void>;
+    snapProjector: (position: 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right') => Promise<void>;
     onDeviceConnected: (callback: (device: DeviceInfo) => void) => () => void;
     onDeviceDiscovered: (callback: (device: { name: string; ip: string; port: number }) => void) => () => void;
     onDeviceDisconnected: (callback: (deviceId: string) => void) => () => void;
     onDeviceUpdated: (callback: (device: DeviceInfo) => void) => () => void;
-    onStreamStats: (callback: (stats: unknown) => void) => () => void;
+    onStreamStats: (callback: (stats: any) => void) => () => void;
     onSdpOffer: (callback: (data: { deviceId?: string; clientIp?: string; sdp: string }) => void) => () => void;
     onIceCandidate: (callback: (data: { deviceId?: string; clientIp?: string; candidate: RTCIceCandidateInit }) => void) => () => void;
     onDiagnosticLog: (callback: (line: string) => void) => () => void;
+    onCaptureSnapshotRequest: (callback: (deviceId: string) => void) => () => void;
   }
 
   interface Window {

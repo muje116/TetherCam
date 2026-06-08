@@ -41,6 +41,19 @@ const electronAPI = {
   getUsbDevices: (): Promise<any[]> => ipcRenderer.invoke('get-usb-devices'),
   enableUsbForwarding: (deviceId: string): Promise<boolean> => ipcRenderer.invoke('enable-usb-forwarding', deviceId),
   getDiagnosticLogs: (): Promise<string[]> => ipcRenderer.invoke('get-diagnostic-logs'),
+  startVirtualCamera: (deviceId: string, offer: string): Promise<string> =>
+    ipcRenderer.invoke('start-virtual-camera', deviceId, offer),
+  stopVirtualCamera: (): Promise<boolean> => ipcRenderer.invoke('stop-virtual-camera'),
+  captureSnapshot: (deviceId: string): Promise<boolean> => ipcRenderer.invoke('capture-snapshot', deviceId),
+  saveSnapshot: (dataUrl: string): Promise<string> => ipcRenderer.invoke('save-snapshot', dataUrl),
+
+  // Projector management
+  openProjector: (deviceId: string): Promise<void> => ipcRenderer.invoke('open-projector', deviceId),
+  closeProjector: (): Promise<void> => ipcRenderer.invoke('close-projector'),
+  toggleProjectorAlwaysOnTop: (): Promise<boolean> => ipcRenderer.invoke('toggle-projector-always-on-top'),
+  resizeProjector: (width: number, height: number): Promise<void> => ipcRenderer.invoke('resize-projector', width, height),
+  snapProjector: (position: 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right'): Promise<void> =>
+    ipcRenderer.invoke('snap-projector', position),
 
   // Remote control
   sendCommand: (deviceId: string, command: string, payload?: unknown): Promise<void> =>
@@ -93,6 +106,12 @@ const electronAPI = {
     const listener = (_event: Electron.IpcRendererEvent, line: string) => callback(line);
     ipcRenderer.on('diagnostic-log', listener);
     return () => ipcRenderer.removeListener('diagnostic-log', listener);
+  },
+
+  onCaptureSnapshotRequest: (callback: (deviceId: string) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, deviceId: string) => callback(deviceId);
+    ipcRenderer.on('capture-snapshot-request', listener);
+    return () => ipcRenderer.removeListener('capture-snapshot-request', listener);
   },
 };
 
