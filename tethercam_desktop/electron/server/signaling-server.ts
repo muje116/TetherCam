@@ -7,6 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { EventEmitter } from 'node:events';
 import { ConnectionManager } from './connection-manager.js';
+import { getAddressCandidates as getNetworkCandidates, getPrimaryLocalAddress as resolvePrimaryAddress, getAllLocalAddresses as resolveAllAddresses } from './network-utils.js';
 
 let _dirname = '';
 try {
@@ -276,77 +277,12 @@ export class SignalingServer extends EventEmitter {
     console.log('[SignalingServer] Server stopped');
   }
 
-  /**
-   * Get all non-internal IPv4 addresses on this machine.
-   */
   getLocalAddresses(): string[] {
-    return this.getAddressCandidates().map((entry) => entry.address);
+    return resolveAllAddresses();
   }
 
-  private getAddressCandidates(): Array<{ interfaceName: string; address: string }> {
-    const interfaces = os.networkInterfaces();
-    const addresses: Array<{ interfaceName: string; address: string }> = [];
-
-    for (const name in interfaces) {
-      const iface = interfaces[name];
-      if (!iface) continue;
-      for (const entry of iface) {
-        if (entry.family === 'IPv4' && !entry.internal) {
-          addresses.push({ interfaceName: name, address: entry.address });
-        }
-      }
-    }
-
-    return addresses;
-  }
-
-  /**
-   * Pick the best address for phone-to-PC LAN connections.
-   * Prioritize private LAN ranges and avoid link-local addresses when possible.
-   */
   getPrimaryLocalAddress(): string {
-    const candidates = this.getAddressCandidates();
-    if (candidates.length === 0) {
-      return '127.0.0.1';
-    }
-
-    const scoreCandidate = (candidate: { interfaceName: string; address: string }): number => {
-      const iface = candidate.interfaceName.toLowerCase();
-      const ip = candidate.address;
-      let score = 0;
-
-      // Strongly prefer real Wi-Fi/Ethernet interfaces.
-      if (iface.includes('wi-fi') || iface.includes('wifi') || iface.includes('wlan')) score += 80;
-      if (iface.includes('ethernet') || iface.includes('en')) score += 40;
-
-      // De-prioritize likely virtual/VPN adapters.
-      if (
-        iface.includes('local area connection') ||
-        iface.includes('openvpn') ||
-        iface.includes('tailscale') ||
-        iface.includes('hyper-v') ||
-        iface.includes('vethernet') ||
-        iface.includes('virtual') ||
-        iface.includes('vmware') ||
-        iface.includes('docker') ||
-        iface.includes('loopback')
-      ) {
-        score -= 70;
-      }
-
-      // Prefer private LAN ranges.
-      if (/^192\.168\./.test(ip)) score += 30;
-      if (/^10\./.test(ip)) score += 20;
-      if (/^172\.(1[6-9]|2\d|3[0-1])\./.test(ip)) score += 15;
-
-      // Avoid link-local addresses.
-      if (ip.startsWith('169.254.')) score -= 100;
-
-      return score;
-    };
-
-    const sorted = [...candidates].sort((a, b) => scoreCandidate(b) - scoreCandidate(a));
-    return sorted[0].address;
+    return resolvePrimaryAddress();
   }
 
 }

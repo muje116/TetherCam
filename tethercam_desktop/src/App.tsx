@@ -51,6 +51,7 @@ const MainView: React.FC = () => {
   const [discoveredDevices, setDiscoveredDevices] = useState<DiscoveredDevice[]>([]);
   const [connectedDevices, setConnectedDevices] = useState<DeviceInfo[]>([]);
   const [serverInfo, setServerInfo] = useState<{ port: number; addresses: string[] } | null>(null);
+  const [allAddresses, setAllAddresses] = useState<string[]>([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState<string | null>(null);
   const [usbStatus, setUsbStatus] = useState<string>('USB not scanned');
   const [searchStatus, setSearchStatus] = useState<string>('');
@@ -116,6 +117,9 @@ const MainView: React.FC = () => {
       const info = await window.electronAPI.getServerInfo();
       if (cancelled) return;
       setServerInfo(info);
+      const addrs = await window.electronAPI.getAllAddresses();
+      if (cancelled) return;
+      setAllAddresses(addrs);
 
       const activeDevices = await window.electronAPI.getDevices();
       if (cancelled) return;
@@ -198,7 +202,17 @@ const MainView: React.FC = () => {
             <div className="qr-container">
               {qrCodeUrl && <img src={qrCodeUrl} alt="QR" />}
             </div>
-            <p className="connect-url">Scan or use: {connectionUrl || 'loading...'}</p>
+            <p className="connect-url">Scan or use: <strong>{connectionUrl || 'loading...'}</strong></p>
+            {allAddresses.length > 1 && (
+              <div className="all-addresses">
+                <p style={{ fontSize: '0.68rem', color: 'var(--text-secondary)', marginBottom: '4px' }}>All available IPs:</p>
+                {allAddresses.map((addr) => (
+                  <code key={addr} className="addr-item" style={{ fontSize: '0.68rem', color: '#a5b4fc', display: 'block' }}>
+                    ws://{addr}:4747
+                  </code>
+                ))}
+              </div>
+            )}
 
             <div className="discovery-list">
               <h4>Discovered</h4>

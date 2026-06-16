@@ -6,6 +6,7 @@ import { ConnectionManager } from './server/connection-manager.js';
 import { DiscoveryService } from './server/discovery-service.js';
 import { MediaPipeline } from './server/media-pipeline.js';
 import { UsbService } from './server/usb-service.js';
+import { getConnectionUrl as resolveConnectionUrl, getAllLocalAddresses } from './server/network-utils.js';
 
 let _dirname = '';
 try {
@@ -223,8 +224,11 @@ function setupIpcHandlers() {
   });
 
   ipcMain.handle('get-connection-url', () => {
-    const primaryAddr = signalingServer?.getPrimaryLocalAddress() ?? '127.0.0.1';
-    return `ws://${primaryAddr}:${SIGNALING_PORT}`;
+    return resolveConnectionUrl();
+  });
+
+  ipcMain.handle('get-all-addresses', () => {
+    return getAllLocalAddresses();
   });
 
   ipcMain.handle('get-diagnostic-logs', () => {

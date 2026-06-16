@@ -37,6 +37,7 @@ const electronAPI = {
   getDevices: (): Promise<DeviceInfo[]> => ipcRenderer.invoke('get-devices'),
   getServerInfo: (): Promise<ServerInfo> => ipcRenderer.invoke('get-server-info'),
   getConnectionUrl: (): Promise<string> => ipcRenderer.invoke('get-connection-url'),
+  getAllAddresses: (): Promise<string[]> => ipcRenderer.invoke('get-all-addresses'),
   disconnectDevice: (deviceId: string): Promise<void> => ipcRenderer.invoke('disconnect-device', deviceId),
   getUsbDevices: (): Promise<any[]> => ipcRenderer.invoke('get-usb-devices'),
   enableUsbForwarding: (deviceId: string): Promise<boolean> => ipcRenderer.invoke('enable-usb-forwarding', deviceId),

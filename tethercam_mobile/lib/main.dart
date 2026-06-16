@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'services/discovery_service.dart';
+import 'services/mobile_network_info.dart';
 import 'pages/streaming_page.dart';
 import 'dart:async';
 
@@ -39,12 +40,16 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
   final TextEditingController _manualEndpointController = TextEditingController();
   bool _isSearching = false;
   bool _isProcessingScan = false;
+  String? _myIp;
+  bool _usbDetected = false;
+  ConnectionMethod _detectedMethod = ConnectionMethod.unknown;
   StreamSubscription? _discoverySub;
   Timer? _discoveryStopTimer;
 
   @override
   void initState() {
     super.initState();
+    _detectNetwork();
     if (_autoEndpoint.isNotEmpty) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
@@ -53,6 +58,34 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
       });
     }
     _startDiscovery();
+  }
+
+  Future<void> _detectNetwork() async {
+    final method = await MobileNetworkInfo.detectConnectionMethod();
+    final ip = await MobileNetworkInfo.getWifiIpAddress();
+    if (mounted) {
+      setState(() {
+        _detectedMethod = method;
+        _usbDetected = method == ConnectionMethod.usb;
+        _myIp = ip;
+      });
+      if (_usbDetected) {
+        _autoConnectUsb();
+      }
+    }
+  }
+
+  Future<void> _autoConnectUsb() async {
+    if (!mounted) return;
+    final uri = Uri.parse('ws://127.0.0.1:4747');
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => StreamingPage(
+          desktop: DiscoveredDesktop(name: 'USB (ADB)', ip: uri.host, port: uri.port),
+        ),
+      ),
+    );
   }
 
   void _startDiscovery() {
@@ -71,7 +104,6 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
       }
     });
 
-    // Auto-stop after 15 seconds
     _discoveryStopTimer = Timer(const Duration(seconds: 15), () {
       if (mounted) {
         setState(() {
@@ -192,6 +224,41 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
         padding: const EdgeInsets.all(16),
         child: Column(
           children: [
+            if (_usbDetected)
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                margin: const EdgeInsets.only(bottom: 8),
+                decoration: BoxDecoration(
+                  color: Colors.green.withOpacity(0.2),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.green.withOpacity(0.4)),
+                ),
+                child: const Row(
+                  children: [
+                    Icon(Icons.usb, color: Colors.green, size: 18),
+                    SizedBox(width: 8),
+                    Text('USB detected — connecting...', style: TextStyle(color: Colors.green, fontSize: 13)),
+                  ],
+                ),
+              ),
+            if (_myIp != null)
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                margin: const EdgeInsets.only(bottom: 8),
+                decoration: BoxDecoration(
+                  color: Colors.indigo.withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.wifi, color: Colors.indigoAccent, size: 16),
+                    const SizedBox(width: 8),
+                    Text('My IP: $_myIp', style: const TextStyle(fontSize: 12, color: Colors.indigoAccent)),
+                  ],
+                ),
+              ),
             Wrap(
               spacing: 8,
               runSpacing: 8,
@@ -204,7 +271,7 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
                 ElevatedButton.icon(
                   onPressed: _connectUsbLocalhost,
                   icon: const Icon(Icons.usb),
-                  label: const Text('USB (ADB)'),
+                  label: Text(_usbDetected ? 'USB (Detected)' : 'USB (ADB)'),
                 ),
                 ElevatedButton.icon(
                   onPressed: _startDiscovery,

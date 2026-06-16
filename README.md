@@ -42,8 +42,8 @@ npm run dev
 ### 2. Mobile
 
 ```bash
-cd tethercam_mobile
-flutter pub get
+
+
 flutter run -d <device_id>
 ```
 

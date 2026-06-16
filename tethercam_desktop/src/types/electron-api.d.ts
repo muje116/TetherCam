@@ -34,6 +34,7 @@ declare global {
     getDevices: () => Promise<DeviceInfo[]>;
     getServerInfo: () => Promise<ServerInfo>;
     getConnectionUrl: () => Promise<string>;
+    getAllAddresses: () => Promise<string[]>;
     disconnectDevice: (deviceId: string) => Promise<void>;
     getUsbDevices: () => Promise<UsbDevice[]>;
     enableUsbForwarding: (deviceId: string) => Promise<boolean>;
