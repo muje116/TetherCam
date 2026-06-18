@@ -43,6 +43,7 @@ dependencies:
   path_provider: ^2.1.5
   wakelock_plus: ^1.2.11
   flutter_local_notifications: ^18.0.1
+  flutter_bluetooth_serial: ^0.4.0
 
 dev_dependencies:
   flutter_test:
