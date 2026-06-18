@@ -1,34 +1,22 @@
 package com.tethercam.tethercam_mobile
 
-import android.os.Build
-import android.security.NetworkSecurityPolicy
 import android.util.Log
 import java.net.Inet4Address
 import java.net.InetAddress
 
 /**
- * Allows ws:// signaling only to loopback, RFC1918, and IPv4 link-local hosts.
+ * Helper object to check if a hostname is a private or local host.
+ * Note: Custom NetworkSecurityPolicy is not supported on modern Android versions
+ * due to API restrictions. Cleartext traffic will be allowed via manifest configuration.
  */
 object PrivateNetworkSecurity {
     private const val TAG = "PrivateNetworkSecurity"
 
-    fun installPrivateCleartextPolicy() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return
-
-        try {
-            val base = NetworkSecurityPolicy.getInstance()
-            val policy = PrivateHostNetworkSecurityPolicy(base)
-            val setInstance = NetworkSecurityPolicy::class.java.getDeclaredMethod(
-                "setInstance",
-                NetworkSecurityPolicy::class.java,
-            )
-            setInstance.isAccessible = true
-            setInstance.invoke(null, policy)
-        } catch (e: Exception) {
-            Log.w(TAG, "Could not install private-network cleartext policy: ${e.message}")
-        }
-    }
-
+    /**
+     * Check if the given hostname is a private or local address.
+     * This is used for informational purposes, but cleartext traffic policy
+     * is now handled via AndroidManifest.xml networkSecurityConfig.
+     */
     fun isPrivateOrLocalHost(hostname: String): Boolean {
         if (hostname.isEmpty()) return false
         if (hostname.equals("localhost", ignoreCase = true)) return true
@@ -53,23 +41,6 @@ object PrivateNetworkSecurity {
             172 -> o1 in 16..31
             192 -> o1 == 168
             else -> false
-        }
-    }
-
-    private class PrivateHostNetworkSecurityPolicy(
-        private val base: NetworkSecurityPolicy,
-    ) : NetworkSecurityPolicy() {
-
-        override fun isCleartextTrafficPermitted(hostname: String): Boolean {
-            return isPrivateOrLocalHost(hostname) || base.isCleartextTrafficPermitted(hostname)
-        }
-
-        override fun isCleartextTrafficPermitted(hostname: String, port: Int): Boolean {
-            return isPrivateOrLocalHost(hostname) || base.isCleartextTrafficPermitted(hostname, port)
-        }
-
-        override fun isCleartextTrafficPermitted(): Boolean {
-            return base.isCleartextTrafficPermitted
         }
     }
 }
