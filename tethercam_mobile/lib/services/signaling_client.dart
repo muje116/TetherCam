@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:async';
+import 'package:flutter/foundation.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:device_info_plus/device_info_plus.dart';
 import 'dart:io';
@@ -41,7 +42,7 @@ class SignalingClient {
   Future<void> _doConnect(String ip, int port) async {
     final url = 'ws://$ip:$port';
     _connectionType = _resolveConnectionType(ip);
-    print('[PHASE] CONNECT -> $url');
+    debugPrint('[PHASE] CONNECT -> $url');
     _statusController.add(ConnectionStatus.connecting);
 
     try {
@@ -64,7 +65,7 @@ class SignalingClient {
             _deviceId = message['deviceId'] as String?;
             _connectTimeoutTimer?.cancel();
             _reconnectAttempt = 0;
-            print('[PHASE] REGISTER OK -> deviceId=$_deviceId');
+            debugPrint('[PHASE] REGISTER OK -> deviceId=$_deviceId');
             _statusController.add(ConnectionStatus.connected);
             _startStatusReporting();
           }
@@ -99,11 +100,11 @@ class SignalingClient {
 
     final delay = min(pow(2, _reconnectAttempt).toInt(), _maxReconnectDelay);
     _reconnectAttempt++;
-    print('[Reconnect] Scheduling reconnect in ${delay}s (attempt $_reconnectAttempt)');
+    debugPrint('[Reconnect] Scheduling reconnect in ${delay}s (attempt $_reconnectAttempt)');
 
     _reconnectTimer = Timer(Duration(seconds: delay), () {
       if (!_intentionalDisconnect && _lastIp != null && _lastPort != null) {
-        print('[Reconnect] Attempting reconnect...');
+        debugPrint('[Reconnect] Attempting reconnect...');
         _doConnect(_lastIp!, _lastPort!);
       }
     });
@@ -182,7 +183,7 @@ class SignalingClient {
       model = iosInfo.model;
     }
 
-    print('[PHASE] REGISTER SEND -> name=$name model=$model platform=$platform');
+    debugPrint('[PHASE] REGISTER SEND -> name=$name model=$model platform=$platform');
     send({
       'type': 'register',
       'name': name,
@@ -201,7 +202,7 @@ class SignalingClient {
   }
 
   void send(Map<String, dynamic> message) {
-    print('[SIGNAL SEND] ${message['type']}');
+    debugPrint('[SIGNAL SEND] ${message['type']}');
     _channel?.sink.add(jsonEncode(message));
   }
 

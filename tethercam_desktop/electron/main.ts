@@ -231,6 +231,10 @@ function setupIpcHandlers() {
     return getAllLocalAddresses();
   });
 
+  ipcMain.handle('get-pending-offer', (_event, deviceId: string) => {
+    return signalingServer?.getPendingOffer(deviceId) ?? null;
+  });
+
   ipcMain.handle('get-diagnostic-logs', () => {
     return diagnosticLogs;
   });

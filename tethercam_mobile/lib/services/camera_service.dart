@@ -11,6 +11,8 @@ class CameraService {
   bool _isFrontCamera = false;
   double _currentZoom = 1.0;
   double _maxZoom = 1.0;
+  double _minExposureOffset = 0.0;
+  double _maxExposureOffset = 0.0;
 
   bool get isInitialized => _isInitialized;
   CameraController? get controller => _controller;
@@ -18,6 +20,8 @@ class CameraService {
   bool get isFrontCamera => _isFrontCamera;
   double get currentZoom => _currentZoom;
   double get maxZoom => _maxZoom;
+  double get minExposureOffset => _minExposureOffset;
+  double get maxExposureOffset => _maxExposureOffset;
 
   Future<void> initialize({CameraDescription? camera, ResolutionPreset preset = ResolutionPreset.veryHigh}) async {
     _cameras = await availableCameras();
@@ -37,7 +41,9 @@ class CameraService {
 
     try {
       await _controller!.initialize();
-      _maxZoom = await _controller!.getMaxZoomLevel() ?? 1.0;
+      _maxZoom = await _controller!.getMaxZoomLevel();
+      _minExposureOffset = await _controller!.getMinExposureOffset();
+      _maxExposureOffset = await _controller!.getMaxExposureOffset();
       _currentZoom = 1.0;
       _torchEnabled = false;
       _isInitialized = true;

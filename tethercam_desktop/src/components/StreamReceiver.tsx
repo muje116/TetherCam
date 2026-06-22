@@ -3,14 +3,18 @@ import React, { useEffect, useRef, useState } from 'react';
 interface StreamReceiverProps {
   deviceId: string;
   isVirtualCamActive?: boolean;
+  isRecording?: boolean;
+  muted?: boolean;
   onStatsUpdate?: (stats: { fps?: number; latencyMs?: number; bitrate?: number; packetLoss?: number }) => void;
 }
 
-const StreamReceiver: React.FC<StreamReceiverProps> = ({ deviceId, isVirtualCamActive = false, onStatsUpdate }) => {
+const StreamReceiver: React.FC<StreamReceiverProps> = ({ deviceId, isVirtualCamActive = false, isRecording = false, muted = true, onStatsUpdate }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [isLive, setIsLive] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const pcRef = useRef<RTCPeerConnection | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const recordedChunksRef = useRef<BlobPart[]>([]);
 
   useEffect(() => {
     if (isVirtualCamActive) {
@@ -63,6 +67,17 @@ const StreamReceiver: React.FC<StreamReceiverProps> = ({ deviceId, isVirtualCamA
       await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
     });
 
+    // Replay any offer that arrived before this component mounted (timing race fix)
+    window.electronAPI.getPendingOffer(deviceId).then(async (pending) => {
+      if (pending && pc.signalingState === 'stable') {
+        console.log('[StreamReceiver] Replaying cached SDP offer for', deviceId);
+        await pc.setRemoteDescription(new RTCSessionDescription({ type: 'offer', sdp: pending.sdp }));
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        window.electronAPI.sendCommand(deviceId, 'sdp-answer', answer.sdp);
+      }
+    }).catch(() => {});
+
     const removeSnapshot = window.electronAPI.onCaptureSnapshotRequest(async (snapshotDeviceId: string) => {
       if (snapshotDeviceId !== deviceId) return;
       const video = videoRef.current;
@@ -108,6 +123,51 @@ const StreamReceiver: React.FC<StreamReceiverProps> = ({ deviceId, isVirtualCamA
     };
   }, [deviceId, isVirtualCamActive, onStatsUpdate]);
 
+  useEffect(() => {
+    if (isRecording) {
+      if (videoRef.current && videoRef.current.srcObject) {
+        try {
+          const stream = videoRef.current.srcObject as MediaStream;
+          const options = { mimeType: 'video/webm; codecs=vp9' };
+          const mediaRecorder = new MediaRecorder(stream, MediaRecorder.isTypeSupported(options.mimeType) ? options : undefined);
+          mediaRecorderRef.current = mediaRecorder;
+          recordedChunksRef.current = [];
+
+          mediaRecorder.ondataavailable = (event) => {
+            if (event.data.size > 0) {
+              recordedChunksRef.current.push(event.data);
+            }
+          };
+
+          mediaRecorder.onstop = () => {
+            const blob = new Blob(recordedChunksRef.current, { type: 'video/webm' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.style.display = 'none';
+            a.href = url;
+            a.download = `TetherCam_Record_${deviceId}_${new Date().getTime()}.webm`;
+            document.body.appendChild(a);
+            a.click();
+            setTimeout(() => {
+              document.body.removeChild(a);
+              URL.revokeObjectURL(url);
+            }, 100);
+          };
+
+          mediaRecorder.start(1000);
+          console.log('[StreamReceiver] Recording started');
+        } catch (e) {
+          console.error('[StreamReceiver] Error starting MediaRecorder:', e);
+        }
+      }
+    } else {
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+        mediaRecorderRef.current.stop();
+        console.log('[StreamReceiver] Recording stopped');
+      }
+    }
+  }, [isRecording, deviceId]);
+
   if (isVirtualCamActive) {
     return (
       <div className="stream-receiver virtual-cam-active-container" style={{
@@ -150,7 +210,7 @@ const StreamReceiver: React.FC<StreamReceiverProps> = ({ deviceId, isVirtualCamA
         ref={videoRef}
         autoPlay
         playsInline
-        muted
+        muted={muted}
         className="live-video"
       />
       <canvas ref={canvasRef} style={{ display: 'none' }} />

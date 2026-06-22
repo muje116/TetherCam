@@ -58,6 +58,7 @@ const MainView: React.FC = () => {
   const [diagnosticLogs, setDiagnosticLogs] = useState<string[]>([]);
   const [streamStats, setStreamStats] = useState<Record<string, StreamStats>>({});
   const [isVirtualCamActive, setIsVirtualCamActive] = useState<boolean>(false);
+  const [isRecording, setIsRecording] = useState<boolean>(false);
 
   const toggleVirtualCam = useCallback(async () => {
     if (!selectedDeviceId) return;
@@ -231,6 +232,30 @@ const MainView: React.FC = () => {
             </div>
           </section>
 
+          <section className="connected-section glass animate-fade">
+            <h3>Connected Devices</h3>
+            {connectedDevices.length === 0 ? (
+              <p className="empty-msg" style={{ fontSize: '0.75rem' }}>No devices connected. Connect a phone via WiFi or USB.</p>
+            ) : (
+              <div className="connected-list">
+                {connectedDevices.map((device) => (
+                  <div
+                    key={device.id}
+                    className={`device-item-mini clickable ${selectedDeviceId === device.id ? 'selected' : ''}`}
+                    onClick={() => setSelectedDeviceId(device.id)}
+                  >
+                    <div className="device-info-left">
+                      <span className="pulse-indicator online"></span>
+                      <strong>{device.name || 'Phone'}</strong>
+                      <span className="platform-tag" style={{ fontSize: '0.6rem', marginLeft: '6px' }}>{device.platform || 'Unknown'}</span>
+                    </div>
+                    <span className="device-battery">🔋{device.battery || 0}%</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+
           <section className="usb-section glass animate-fade">
             <h3>USB (ADB)</h3>
             <p className="usb-status">{usbStatus}</p>
@@ -253,15 +278,26 @@ const MainView: React.FC = () => {
                 <button className="btn-secondary-sm" style={{ marginTop: '6px' }} onClick={handleSnapshot}>
                   📸 Capture Snapshot
                 </button>
+                <button className={`btn-secondary-sm ${isRecording ? 'active' : ''}`} style={{ marginTop: '6px', color: isRecording ? '#ef4444' : undefined, borderColor: isRecording ? '#ef4444' : undefined }} onClick={() => setIsRecording(!isRecording)}>
+                  {isRecording ? '⏹️ Stop Recording' : '⏺️ Record Stream'}
+                </button>
                 <div className="integration-help">
-                  <p style={{ margin: '0 0 4px 0', fontSize: '0.72rem', fontWeight: 600 }}>RTSP for OBS Media Source:</p>
-                  <code style={{ fontSize: '0.68rem', display: 'block', wordBreak: 'break-all', margin: '0 0 8px 0', background: 'rgba(0,0,0,0.3)', padding: '4px', borderRadius: '4px' }}>
-                    tcp://127.0.0.1:8554
-                  </code>
-                  <p style={{ margin: '0 0 4px 0', fontSize: '0.72rem', fontWeight: 600 }}>Browser Source (Preview):</p>
-                  <code style={{ fontSize: '0.68rem', display: 'block', wordBreak: 'break-all', margin: '0', background: 'rgba(0,0,0,0.3)', padding: '4px', borderRadius: '4px' }}>
-                    {`http://localhost:4747/?projector=true&deviceId=${selectedDeviceId}`}
-                  </code>
+                  <p style={{ margin: '0 0 6px 0', fontSize: '0.72rem', fontWeight: 700, color: '#a5b4fc' }}>📡 NDI via OBS (Recommended)</p>
+                  <ol style={{ margin: '0 0 8px 0', paddingLeft: '14px', fontSize: '0.68rem', lineHeight: '1.6', color: '#94a3b8' }}>
+                    <li>Install <strong style={{color:'#e2e8f0'}}>OBS Studio</strong> + <strong style={{color:'#e2e8f0'}}>obs-ndi</strong> plugin</li>
+                    <li>In OBS → Add <strong style={{color:'#e2e8f0'}}>Browser Source</strong>:<br/>
+                      <code style={{ fontSize: '0.65rem', background: 'rgba(0,0,0,0.4)', padding: '2px 4px', borderRadius: '3px', color: '#a5b4fc', display: 'block', marginTop: '2px', wordBreak: 'break-all' }}>
+                        {`http://localhost:4747/?projector=true&deviceId=${selectedDeviceId}`}
+                      </code>
+                    </li>
+                    <li>Or add <strong style={{color:'#e2e8f0'}}>Media Source</strong> (RTSP):<br/>
+                      <code style={{ fontSize: '0.65rem', background: 'rgba(0,0,0,0.4)', padding: '2px 4px', borderRadius: '3px', color: '#a5b4fc', display: 'block', marginTop: '2px' }}>
+                        tcp://127.0.0.1:8554
+                      </code>
+                    </li>
+                    <li>Activate <strong style={{color:'#e2e8f0'}}>NDI Output</strong> in OBS Tools menu to broadcast as NDI on the network</li>
+                  </ol>
+                  <p style={{ margin: '0', fontSize: '0.65rem', color: '#64748b' }}>Other apps (vMix, Resolume, Wirecast) can pick up the NDI feed automatically.</p>
                 </div>
               </>
             ) : (
@@ -284,12 +320,13 @@ const MainView: React.FC = () => {
         </aside>
 
         <section className="main-stage">
-          <div className="focus-area glass">
+          <div className="focus-area glass" id="focus-area-container">
             {selectedDeviceId ? (
               <div className="focused-stream">
                 <StreamReceiver
                   deviceId={selectedDeviceId}
                   isVirtualCamActive={isVirtualCamActive}
+                  isRecording={isRecording}
                   onStatsUpdate={(stats) => setStreamStats((prev) => ({ ...prev, [selectedDeviceId]: stats }))}
                 />
                 {currentStats && (
@@ -325,6 +362,19 @@ const MainView: React.FC = () => {
                     <button className="btn-icon" title="Flash" onClick={() => window.electronAPI.sendCommand(selectedDeviceId, 'toggle-torch')}>
                       🔦
                     </button>
+                    <button className="btn-icon" title="Fullscreen" onClick={() => {
+                      const el = document.getElementById('focus-area-container');
+                      if (document.fullscreenElement) {
+                        document.exitFullscreen();
+                      } else {
+                        el?.requestFullscreen();
+                      }
+                    }}>
+                      ⛶
+                    </button>
+                    <button className="btn-icon" title="Popout (Open in New Window)" onClick={() => window.electronAPI.openProjector(selectedDeviceId)}>
+                      🪟
+                    </button>
                   </div>
                 </div>
               </div>
@@ -343,7 +393,7 @@ const MainView: React.FC = () => {
                 onClick={() => setSelectedDeviceId(device.id)}
               >
                 <div className="mini-preview">
-                  <StreamReceiver deviceId={device.id} isVirtualCamActive={false} />
+                  <StreamReceiver deviceId={device.id} isVirtualCamActive={false} muted={true} />
                 </div>
                 <div className="mini-info">
                   <span>{device.name}</span>

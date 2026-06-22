@@ -47,6 +47,8 @@ const electronAPI = {
   stopVirtualCamera: (): Promise<boolean> => ipcRenderer.invoke('stop-virtual-camera'),
   captureSnapshot: (deviceId: string): Promise<boolean> => ipcRenderer.invoke('capture-snapshot', deviceId),
   saveSnapshot: (dataUrl: string): Promise<string> => ipcRenderer.invoke('save-snapshot', dataUrl),
+  getPendingOffer: (deviceId: string): Promise<{ sdp: string; clientIp: string } | null> =>
+    ipcRenderer.invoke('get-pending-offer', deviceId),
 
   // Projector management
   openProjector: (deviceId: string): Promise<void> => ipcRenderer.invoke('open-projector', deviceId),

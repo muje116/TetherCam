@@ -6,6 +6,7 @@ import '../services/webrtc_service.dart';
 import '../services/discovery_service.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 import '../services/notification_service.dart';
+import 'package:battery_plus/battery_plus.dart';
 
 class StreamingPage extends StatefulWidget {
   final DiscoveredDesktop desktop;
@@ -25,7 +26,11 @@ class _StreamingPageState extends State<StreamingPage> {
   ConnectionStatus _status = ConnectionStatus.disconnected;
   String? _lastSocketError;
   bool _showQuickSettings = false;
+  bool _isMuted = false;
   double _zoomSliderValue = 1.0;
+  double _exposureOffset = 0.0;
+  int? _batteryLevel;
+  final Battery _battery = Battery();
   int _selectedResolutionIndex = 2;
   int _selectedFpsIndex = 1;
   int _selectedBitrateIndex = 2;
@@ -53,7 +58,17 @@ class _StreamingPageState extends State<StreamingPage> {
     super.initState();
     _webRTCService = WebRTCService(_signalingClient);
     _initialize();
+    _initBattery();
     WakelockPlus.enable();
+  }
+
+  Future<void> _initBattery() async {
+    final level = await _battery.batteryLevel;
+    if (mounted) setState(() => _batteryLevel = level);
+    _battery.onBatteryStateChanged.listen((BatteryState state) async {
+      final newLevel = await _battery.batteryLevel;
+      if (mounted) setState(() => _batteryLevel = newLevel);
+    });
   }
 
   Future<void> _initialize() async {
@@ -147,6 +162,13 @@ class _StreamingPageState extends State<StreamingPage> {
               _latencyMs = '${payloadMap['latencyMs'] ?? '--'} ms';
               _streamFps = '${payloadMap['fps'] ?? '--'}';
             });
+            break;
+          case 'request-stream':
+            // Desktop is requesting we start streaming immediately
+            if (!_isStreaming && _status == ConnectionStatus.connected) {
+              await Future.delayed(const Duration(milliseconds: 200));
+              if (mounted && !_isStreaming) _toggleStream();
+            }
             break;
         }
       }
@@ -249,6 +271,22 @@ class _StreamingPageState extends State<StreamingPage> {
                     ),
                     Row(
                       children: [
+                        if (_batteryLevel != null)
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                            margin: const EdgeInsets.only(right: 8),
+                            decoration: BoxDecoration(
+                              color: Colors.black54,
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Row(
+                              children: [
+                                Icon(Icons.battery_full, size: 14, color: _batteryLevel! > 20 ? Colors.green : Colors.red),
+                                const SizedBox(width: 4),
+                                Text('$_batteryLevel%', style: const TextStyle(fontSize: 12)),
+                              ],
+                            ),
+                          ),
                         if (_isStreaming && _streamFps != null)
                           Container(
                             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -282,7 +320,7 @@ class _StreamingPageState extends State<StreamingPage> {
                     margin: const EdgeInsets.only(top: 8),
                     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                     decoration: BoxDecoration(
-                      color: Colors.red.withOpacity(0.7),
+                      color: Colors.red.withValues(alpha: 0.7),
                       borderRadius: BorderRadius.circular(8),
                     ),
                     child: Text(
@@ -314,6 +352,30 @@ class _StreamingPageState extends State<StreamingPage> {
                     onChanged: (v) {
                       setState(() => _zoomSliderValue = v);
                       _cameraService.setZoom(v);
+                    },
+                  ),
+                ),
+              ),
+            ),
+
+          if (_cameraService.minExposureOffset != _cameraService.maxExposureOffset)
+            Positioned(
+              right: 20,
+              top: 0,
+              bottom: 0,
+              child: RotatedBox(
+                quarterTurns: -1,
+                child: SizedBox(
+                  width: 200,
+                  child: Slider(
+                    value: _exposureOffset,
+                    min: _cameraService.minExposureOffset,
+                    max: _cameraService.maxExposureOffset,
+                    divisions: 20,
+                    label: 'EV ${_exposureOffset.toStringAsFixed(1)}',
+                    onChanged: (v) {
+                      setState(() => _exposureOffset = v);
+                      _cameraService.setExposure(v);
                     },
                   ),
                 ),
@@ -368,6 +430,13 @@ class _StreamingPageState extends State<StreamingPage> {
                       onPressed: () async {
                         await _cameraService.toggleTorch();
                         setState(() {});
+                      },
+                    ),
+                    _ControlButton(
+                      icon: _isMuted ? Icons.mic_off : Icons.mic,
+                      onPressed: () {
+                        setState(() => _isMuted = !_isMuted);
+                        _webRTCService.toggleAudioMute(_isMuted);
                       },
                     ),
                   ],

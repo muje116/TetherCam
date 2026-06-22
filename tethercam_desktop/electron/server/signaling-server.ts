@@ -27,6 +27,8 @@ export class SignalingServer extends EventEmitter {
   private wss: WebSocketServer;
   private port: number;
   private connectionManager: ConnectionManager;
+  /** Cache the latest SDP offer per deviceId so late-mounting renderers can replay it */
+  private pendingOffers: Map<string, { sdp: string; clientIp: string }> = new Map();
 
   constructor(port: number, connectionManager: ConnectionManager) {
     super();
@@ -103,8 +105,8 @@ export class SignalingServer extends EventEmitter {
     const distPath = path.join(_dirname, '../../dist');
     this.app.use(express.static(distPath));
 
-    // Wildcard fallback to serve index.html for React SPA
-    this.app.get('*', (req, res, next) => {
+    // SPA fallback — serve index.html for any non-API route
+    this.app.use((req, res, next) => {
       if (req.path.startsWith('/api')) {
         return next();
       }
@@ -191,6 +193,11 @@ export class SignalingServer extends EventEmitter {
           ws,
         });
         setDeviceId(device.id);
+        // Send request-stream so the phone starts WebRTC immediately
+        setTimeout(() => {
+          this.connectionManager.sendCommand(device.id, 'request-stream', {});
+          this.emit('log', `[SignalingServer] Sent request-stream to '${device.name}'`);
+        }, 500);
         ws.send(JSON.stringify({
           type: 'registered',
           deviceId: device.id,
@@ -201,12 +208,16 @@ export class SignalingServer extends EventEmitter {
       }
 
       case 'sdp-offer': {
-        // WebRTC SDP Offer from mobile — forward to desktop renderer for processing
+        // WebRTC SDP Offer from mobile — cache it and forward to desktop renderer
         console.log(`[SignalingServer] Received SDP offer from ${clientIp}`);
         const resolvedDeviceId = (message.deviceId as string) ?? activeDeviceId ?? undefined;
+        const offerSdp = message.sdp as string;
+        if (resolvedDeviceId && offerSdp) {
+          this.pendingOffers.set(resolvedDeviceId, { sdp: offerSdp, clientIp });
+        }
         this.emit('sdp-offer', {
           deviceId: resolvedDeviceId,
-          sdp: message.sdp,
+          sdp: offerSdp,
           clientIp,
         });
         break;
@@ -283,6 +294,13 @@ export class SignalingServer extends EventEmitter {
 
   getPrimaryLocalAddress(): string {
     return resolvePrimaryAddress();
+  }
+
+  /** Returns and clears a cached SDP offer for a device (so late-mounting renderers can replay it) */
+  getPendingOffer(deviceId: string): { sdp: string; clientIp: string } | null {
+    const offer = this.pendingOffers.get(deviceId) ?? null;
+    if (offer) this.pendingOffers.delete(deviceId);
+    return offer;
   }
 
 }

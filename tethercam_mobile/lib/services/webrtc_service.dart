@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'signaling_client.dart';
 
@@ -73,7 +74,7 @@ class WebRTCService {
   Future<void> startStreaming() async {
     await stop();
 
-    print('[PHASE] WEBRTC START');
+    debugPrint('[PHASE] WEBRTC START');
     _peerConnection = await createPeerConnection(_iceServers, _configConstraints);
 
     final Map<String, dynamic> mediaConstraints = {
@@ -100,7 +101,7 @@ class WebRTCService {
 
     _peerConnection!.onIceCandidate = (candidate) {
       if (candidate.candidate == null) return;
-      print('[PHASE] ICE SEND');
+      debugPrint('[PHASE] ICE SEND');
       _signalingClient.send({
         'type': 'ice-candidate',
         'deviceId': _signalingClient.deviceId,
@@ -113,7 +114,7 @@ class WebRTCService {
     };
 
     _peerConnection!.onIceConnectionState = (state) {
-      print('[ICE] Connection state: $state');
+      debugPrint('[ICE] Connection state: $state');
       if (state == RTCIceConnectionState.RTCIceConnectionStateDisconnected ||
           state == RTCIceConnectionState.RTCIceConnectionStateFailed) {
         _signalingClient.onConnectionLost();
@@ -135,7 +136,7 @@ class WebRTCService {
     await _peerConnection!.setLocalDescription(
       RTCSessionDescription(sdp, 'offer'),
     );
-    print('[PHASE] OFFER SEND');
+    debugPrint('[PHASE] OFFER SEND');
 
     _signalingClient.send({
       'type': 'sdp-offer',
@@ -192,7 +193,7 @@ class WebRTCService {
 
   Future<void> handleAnswer(String sdp) async {
     if (_peerConnection == null || sdp.isEmpty) return;
-    print('[PHASE] ANSWER RECV');
+    debugPrint('[PHASE] ANSWER RECV');
     await _peerConnection!.setRemoteDescription(
       RTCSessionDescription(sdp, 'answer'),
     );
@@ -200,7 +201,7 @@ class WebRTCService {
 
   Future<void> handleIceCandidate(Map<String, dynamic> candidate) async {
     if (_peerConnection == null) return;
-    print('[PHASE] ICE RECV');
+    debugPrint('[PHASE] ICE RECV');
     await _peerConnection!.addCandidate(
       RTCIceCandidate(
         candidate['candidate'],
@@ -208,6 +209,13 @@ class WebRTCService {
         candidate['sdpMLineIndex'],
       ),
     );
+  }
+
+  void toggleAudioMute(bool muted) {
+    if (_localStream == null) return;
+    for (final track in _localStream!.getAudioTracks()) {
+      track.enabled = !muted;
+    }
   }
 
   Future<void> stop() async {

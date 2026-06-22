@@ -1,2 +1,973 @@
-var e=Object.create,t=Object.defineProperty,n=Object.getOwnPropertyDescriptor,r=Object.getOwnPropertyNames,i=Object.getPrototypeOf,a=Object.prototype.hasOwnProperty,o=(e,i,o,s)=>{if(i&&typeof i==`object`||typeof i==`function`)for(var c=r(i),l=0,u=c.length,d;l<u;l++)d=c[l],!a.call(e,d)&&d!==o&&t(e,d,{get:(e=>i[e]).bind(null,d),enumerable:!(s=n(i,d))||s.enumerable});return e},s=(n,r,a)=>(a=n==null?{}:e(i(n)),o(r||!n||!n.__esModule?t(a,`default`,{value:n,enumerable:!0}):a,n));let c=require(`electron`),l=require(`node:path`);l=s(l);let u=require(`node:url`),d=require(`express`);d=s(d);let f=require(`node:http`);f=s(f);let p=require(`ws`),m=require(`cors`);m=s(m);let h=require(`node:os`);h=s(h);let g=require(`node:events`),_=require(`uuid`),v=require(`multicast-dns`);v=s(v);let y=require(`werift`),b=require(`fluent-ffmpeg`);b=s(b);let x=require(`ffmpeg-static`);x=s(x);let S=require(`node:child_process`),C=require(`node:util`);function w(){let e=h.default.networkInterfaces(),t=[];for(let n in e){let r=e[n];if(r)for(let e of r)e.family===`IPv4`&&t.push({interfaceName:n,address:e.address})}return t}function T(){let e=w();if(e.length===0)return`127.0.0.1`;let t=e=>{let t=e.interfaceName.toLowerCase(),n=e.address,r=0;return(t.includes(`wi-fi`)||t.includes(`wifi`)||t.includes(`wlan`)||t.includes(`wireless`))&&(r+=80),(/^en\d/.test(t)||t.includes(`ethernet`))&&(r+=40),(t.includes(`openvpn`)||t.includes(`tailscale`)||t.includes(`hyper-v`)||t.includes(`vethernet`)||t.includes(`virtual`)||t.includes(`vmware`)||t.includes(`docker`)||t.includes(`loopback`)||t.includes(`bluetooth`))&&(r-=70),(n===`127.0.0.1`||n===`::1`)&&(r-=100),/^192\.168\./.test(n)&&(r+=30),/^10\./.test(n)&&(r+=20),/^172\.(1[6-9]|2\d|3[0-1])\./.test(n)&&(r+=15),n.startsWith(`169.254.`)&&(r-=100),r};return[...e].sort((e,n)=>t(n)-t(e))[0].address}function E(){return`ws://${T()}:4747`}function D(){return w().map(e=>e.address).filter(e=>e!==`127.0.0.1`&&e!==`::1`)}var O=``;try{O=__dirname}catch{O=l.default.dirname((0,u.fileURLToPath)({}.url))}var k=class extends g.EventEmitter{constructor(e,t){super(),this.port=e,this.connectionManager=t,this.app=(0,d.default)(),this.app.use((0,m.default)()),this.app.use(d.default.json()),this.server=f.default.createServer(this.app),this.wss=new p.WebSocketServer({server:this.server}),this.setupHttpRoutes(),this.setupStaticRoutes(),this.setupWebSocket()}setupHttpRoutes(){this.app.get(`/api/info`,(e,t)=>{t.json({app:`TetherCam`,version:`1.0.0`,platform:process.platform,hostname:h.default.hostname(),port:this.port})}),this.app.get(`/api/devices`,(e,t)=>{t.json(this.connectionManager.getDevices())}),this.app.post(`/api/devices/:deviceId/command`,(e,t)=>{let{deviceId:n}=e.params,{command:r,payload:i}=e.body;this.connectionManager.sendCommand(n,r,i)?t.json({status:`ok`}):t.status(404).json({error:`Device not found or not connected`})}),this.app.delete(`/api/devices/:deviceId`,(e,t)=>{let{deviceId:n}=e.params;this.connectionManager.disconnectDevice(n),t.json({status:`ok`})}),this.app.get(`/api/connection-info`,(e,t)=>{let n=this.getLocalAddresses(),r=this.getPrimaryLocalAddress();t.json({addresses:n,port:this.port,url:`ws://${r}:${this.port}`})})}setupStaticRoutes(){let e=l.default.join(O,`../../dist`);this.app.use(d.default.static(e)),this.app.get(`*`,(t,n,r)=>{if(t.path.startsWith(`/api`))return r();n.sendFile(l.default.join(e,`index.html`))})}setupWebSocket(){this.wss.on(`connection`,(e,t)=>{let n=t.socket.remoteAddress?.replace(`::ffff:`,``)??`unknown`;console.log(`[SignalingServer] WebSocket connection from ${n}`),this.emit(`log`,`[SignalingServer] WebSocket connection from ${n}`);let r=null;e.on(`message`,t=>{try{let i=JSON.parse(t.toString());this.handleMessage(e,i,n,r,e=>{r=e})}catch(t){console.error(`[SignalingServer] Invalid message:`,t),this.emit(`log`,`[SignalingServer] Invalid message from ${n}: ${String(t)}`),e.send(JSON.stringify({type:`error`,message:`Invalid JSON`}))}}),e.on(`close`,()=>{r&&this.connectionManager.removeDevice(r),console.log(`[SignalingServer] WebSocket disconnected: ${n}`),this.emit(`log`,`[SignalingServer] WebSocket disconnected: ${n}`)}),e.on(`error`,e=>{console.error(`[SignalingServer] WebSocket error from ${n}:`,e.message),this.emit(`log`,`[SignalingServer] WebSocket error from ${n}: ${e.message}`)}),e.send(JSON.stringify({type:`server-info`,hostname:h.default.hostname(),platform:process.platform,version:`1.0.0`}));let i=setInterval(()=>{e.readyState===e.OPEN&&e.ping()},15e3);e.on(`pong`,()=>{}),e.on(`close`,()=>clearInterval(i)),e.on(`error`,()=>clearInterval(i))})}handleMessage(e,t,n,r,i){switch(t.type){case`register`:{let r=this.connectionManager.addDevice({name:t.name??`Unknown Device`,model:t.model??`Unknown`,platform:t.platform??`android`,ip:n,connectionType:t.connectionType??`wifi`,ws:e});i(r.id),e.send(JSON.stringify({type:`registered`,deviceId:r.id,message:`Device registered successfully`})),this.emit(`log`,`[SignalingServer] Registered device '${r.name}' from ${n}`);break}case`sdp-offer`:{console.log(`[SignalingServer] Received SDP offer from ${n}`);let e=t.deviceId??r??void 0;this.emit(`sdp-offer`,{deviceId:e,sdp:t.sdp,clientIp:n});break}case`ice-candidate`:{console.log(`[SignalingServer] Received ICE candidate from ${n}`);let e=t.deviceId??r??void 0;this.emit(`ice-candidate`,{deviceId:e,candidate:t.candidate,clientIp:n});break}case`device-status`:{let e=t.deviceId;e&&this.connectionManager.updateDevice(e,{battery:t.battery,temperature:t.temperature,streamSettings:t.streamSettings});break}case`stream-stats`:this.connectionManager.emit(`stream-stats`,{deviceId:t.deviceId,latencyMs:t.latencyMs,fps:t.fps,bitrate:t.bitrate,packetLoss:t.packetLoss,resolution:t.resolution});break;default:console.log(`[SignalingServer] Unknown message type: ${t.type}`)}}async start(){return new Promise((e,t)=>{this.server.listen(this.port,`0.0.0.0`,()=>{console.log(`[SignalingServer] HTTP + WebSocket server listening on 0.0.0.0:${this.port}`),e()}),this.server.on(`error`,t)})}stop(){this.wss.clients.forEach(e=>e.close()),this.server.close(),console.log(`[SignalingServer] Server stopped`)}getLocalAddresses(){return D()}getPrimaryLocalAddress(){return T()}},A=class extends g.EventEmitter{constructor(){super(),this.devices=new Map}addDevice(e){let t=(0,_.v4)(),n={id:t,name:e.name,model:e.model,platform:e.platform,ip:e.ip,connectionType:e.connectionType,status:`connected`,connectedAt:new Date,streamSettings:{resolution:`1080p`,fps:30,bitrate:4e3,codec:`H.264`},battery:100,temperature:25,ws:e.ws};return this.devices.set(t,n),this.emit(`device-connected`,this.sanitizeDevice(n)),console.log(`[ConnectionManager] Device connected: ${n.name} (${n.id})`),n}removeDevice(e){let t=this.devices.get(e);t&&(t.status=`disconnected`,t.ws&&t.ws.readyState===1&&t.ws.close(),this.devices.delete(e),this.emit(`device-disconnected`,e),console.log(`[ConnectionManager] Device disconnected: ${t.name} (${e})`))}updateDevice(e,t){let n=this.devices.get(e);n&&(Object.assign(n,t),this.emit(`device-updated`,this.sanitizeDevice(n)))}sendCommand(e,t,n){let r=this.devices.get(e);return r?.ws&&r.ws.readyState===1?(r.ws.send(JSON.stringify({type:`command`,command:t,payload:n})),console.log(`[ConnectionManager] Sent command '${t}' to ${r.name}`),!0):!1}disconnectDevice(e){this.removeDevice(e)}getDevices(){return Array.from(this.devices.values()).map(e=>this.sanitizeDevice(e))}getDevice(e){return this.devices.get(e)}sanitizeDevice(e){let{ws:t,...n}=e;return n}},j=4747,M=1e4,N=3e3,P=class extends g.EventEmitter{constructor(){super(),this.serviceName=`_TetherCam._tcp.local`,this.discoveredDevices=new Map,this.queryInterval=null,this.announceInterval=null,this.hostname=h.default.hostname(),this.mdns=(0,v.default)()}start(){console.log(`[DiscoveryService] Starting mDNS discovery and advertisement`),this.advertise(),this.mdns.on(`response`,e=>{this.handleResponse(e)}),this.queryInterval=setInterval(()=>this.query(),M),this.announceInterval=setInterval(()=>this.announce(),N),this.query(),this.announce()}advertise(){this.mdns.on(`query`,e=>{(e.questions??[]).some(e=>e.name===this.serviceName||e.name===`_services._dns-sd._udp.local`)&&this.announce()})}buildAdvertisementRecords(e){let t=`${this.hostname}.${this.serviceName}`,n=`${this.hostname}.local`;return[{name:this.serviceName,type:`PTR`,ttl:120,data:t},{name:t,type:`SRV`,ttl:120,data:{port:j,target:n,priority:0,weight:0}},{name:n,type:`A`,ttl:120,data:e},{name:n,type:`TXT`,ttl:120,data:Buffer.from(`app=TetherCam&port=${j}`)}]}announce(){let e=this.getPrimaryLocalAddress(),t=this.buildAdvertisementRecords(e);this.mdns.respond({answers:t},e=>{e&&console.warn(`[DiscoveryService] Announce failed:`,e.message)})}query(){this.mdns.query({questions:[{name:this.serviceName,type:`PTR`}]})}handleResponse(e){let t=[...e.answers??[],...e.additionals??[]],n=t.find(e=>e.type===`PTR`&&e.name===this.serviceName);if(!n||typeof n.data!=`string`)return;let r=t.find(e=>e.type===`SRV`&&e.name===n.data),i=r&&typeof r.data==`object`&&r.data!==null&&`target`in r.data?String(r.data.target):``,a=t.find(e=>e.type===`A`&&e.name===i);if(r&&a&&typeof a.data==`string`){let e=typeof r.data==`object`&&r.data!==null&&`port`in r.data?Number(r.data.port):j,t={name:n.data.split(`.`)[0],ip:a.data,port:e,lastSeen:Date.now()},i=`${t.ip}:${t.port}`;this.discoveredDevices.has(i)?this.discoveredDevices.set(i,t):(this.discoveredDevices.set(i,t),this.emit(`device-discovered`,t))}}getPrimaryLocalAddress(){return T()}getDiscoveredDevices(){let e=Date.now();for(let[t,n]of this.discoveredDevices.entries())e-n.lastSeen>3e4&&this.discoveredDevices.delete(t);return Array.from(this.discoveredDevices.values())}stop(){this.queryInterval&&=(clearInterval(this.queryInterval),null),this.announceInterval&&=(clearInterval(this.announceInterval),null),this.mdns.destroy()}};x.default&&b.default.setFfmpegPath(x.default);var F=class extends g.EventEmitter{constructor(){super(),this.pc=null,this.ffmpegProcess=null,this.rtspServer=null}async createPeerConnection(e){this.pc=new y.RTCPeerConnection({codecs:{video:[{mimeType:`video/H264`,clockRate:9e4,payloadType:102,rtcpFeedback:[{type:`nack`},{type:`nack`,parameter:`pli`},{type:`goog-remb`}]}],audio:[{mimeType:`audio/OPUS`,clockRate:48e3,payloadType:111}]}}),this.pc.onTrack.subscribe(e=>{e.kind===`video`&&this.startFfmpegPipeline(e)}),await this.pc.setRemoteDescription({type:`offer`,sdp:e});let t=await this.pc.createAnswer();return await this.pc.setLocalDescription(t),t.sdp}getPlatformOutputs(){switch(h.default.platform()){case`win32`:return[`video=OBS Virtual Camera`,`audio=Virtual Cable`];case`darwin`:return[`video=TetherCam`,`audio=BlackHole`];case`linux`:return[`video=/dev/video10`,`audio=null_sink`];default:return[`video=/dev/video10`,`audio=null_sink`]}}startFfmpegPipeline(e){console.log(`[MediaPipeline] Starting FFmpeg pipeline to Virtual Camera + RTSP`),this.ffmpegProcess=(0,b.default)().input(e).inputFormat(`rtp`);let t=h.default.platform();t===`win32`?this.ffmpegProcess.outputFormat(`dshow`).videoCodec(`rawvideo`).pixelFormat(`yuv420p`).output(`video=OBS Virtual Camera`):t===`darwin`?this.ffmpegProcess.outputFormat(`avfoundation`).videoCodec(`rawvideo`).pixelFormat(`yuv420p`).output(`TetherCam`):this.ffmpegProcess.outputFormat(`v4l2`).videoCodec(`rawvideo`).pixelFormat(`yuv420p`).output(`/dev/video10`),this.ffmpegProcess.output(`tcp://127.0.0.1:8554?listen`).outputFormat(`mpegts`).videoCodec(`libx264`).audioCodec(`aac`).outputOptions([`-preset ultrafast`,`-tune zerolatency`,`-threads 2`]).on(`start`,e=>console.log(`[FFmpeg VirtualCam + Broadcast] Started:`,e)).on(`error`,e=>console.error(`[FFmpeg] Error:`,e.message)),this.ffmpegProcess.run()}async createAudioPeerConnection(e){let t=new y.RTCPeerConnection({codecs:{audio:[{mimeType:`audio/OPUS`,clockRate:48e3,payloadType:111}]}});t.onTrack.subscribe(e=>{e.kind===`audio`&&this.startAudioPipeline(e)}),await t.setRemoteDescription({type:`offer`,sdp:e});let n=await t.createAnswer();return await t.setLocalDescription(n),n.sdp}startAudioPipeline(e){let t=h.default.platform(),n=(0,b.default)().input(e).inputFormat(`rtp`);t===`win32`?n.outputFormat(`dshow`).audioCodec(`pcm_s16le`).output(`audio=Virtual Cable`):t===`darwin`?n.outputFormat(`avfoundation`).audioCodec(`pcm_s16le`).output(`:TetherCam Audio`):n.outputFormat(`pulse`).audioCodec(`pcm_s16le`).output(`TetherCam_Audio`),n.on(`start`,()=>console.log(`[FFmpeg Audio] Started virtual microphone`)).on(`error`,e=>console.error(`[FFmpeg Audio] Error:`,e.message)).run()}stop(){this.ffmpegProcess?.kill(),this.pc?.close()}},I=(0,C.promisify)(S.exec),L=class extends g.EventEmitter{constructor(){super()}async getConnectedDevices(){try{let{stdout:e}=await I(`adb devices -l`),t=e.trim().split(`
-`),n=[];for(let e=1;e<t.length;e++){let r=t[e].trim();if(!r)continue;let i=r.split(/\s+/),a=i[0],o=i[1],s=r.match(/model:(\S+)/),c=s?s[1]:`Unknown`;n.push({id:a,model:c,status:o})}return n}catch(e){return console.error(`[UsbService] Error listing devices:`,e),[]}}async enableForwarding(e,t,n){try{await I(`adb -s ${e} forward tcp:${t} tcp:${n}`),console.log(`[UsbService] ADB Forward enabled: tcp:${t} -> tcp:${n}`);try{await I(`adb -s ${e} reverse tcp:${t} tcp:${n}`),console.log(`[UsbService] ADB Reverse enabled: tcp:${t} -> tcp:${n}`)}catch(e){console.warn(`[UsbService] Warning setting up ADB reverse (unsupported on very old Android versions):`,e)}return!0}catch(e){return console.error(`[UsbService] Error setting up USB port forwarding:`,e),!1}}async disableForwarding(e,t){try{await I(`adb ${t?`-s ${t} `:``} forward --remove tcp:${e}`),console.log(`[UsbService] Removed ADB Forward for tcp:${e}`)}catch(e){console.error(`[UsbService] Error removing ADB Forward:`,e)}try{await I(`adb ${t?`-s ${t} `:``} reverse --remove tcp:${e}`),console.log(`[UsbService] Removed ADB Reverse for tcp:${e}`)}catch(e){console.error(`[UsbService] Error removing ADB Reverse:`,e)}}},R=``;try{R=__dirname}catch{R=l.default.dirname((0,u.fileURLToPath)({}.url))}var z=null,B=null,V=null,H=null,U=null,W=null,G=null,K=null,q=[],J=4747;function Y(e){let t=`${new Date().toISOString()} ${e}`;q.push(t),q.length>200&&q.shift(),z?.webContents.send(`diagnostic-log`,t)}function X(){z=new c.BrowserWindow({width:1280,height:820,minWidth:960,minHeight:600,title:`TetherCam`,backgroundColor:`#0a0a0f`,titleBarStyle:`hiddenInset`,frame:process.platform!==`darwin`,webPreferences:{preload:l.default.join(R,`preload.js`),contextIsolation:!0,nodeIntegration:!1,sandbox:!1}}),process.env.VITE_DEV_SERVER_URL?(z.loadURL(process.env.VITE_DEV_SERVER_URL),z.webContents.openDevTools({mode:`detach`})):z.loadFile(l.default.join(R,`../dist/index.html`)),z.on(`close`,e=>{V&&(e.preventDefault(),z?.hide())}),z.on(`closed`,()=>{z=null})}function Z(){V=new c.Tray(c.nativeImage.createEmpty()),V.setToolTip(`TetherCam`);let e=c.Menu.buildFromTemplate([{label:`Show TetherCam`,click:()=>z?.show()},{type:`separator`},{label:`Quit`,click:()=>{V?.destroy(),V=null,c.app.quit()}}]);V.setContextMenu(e),V.on(`double-click`,()=>z?.show())}async function Q(){U=new A,W=new P,G=new F,K=new L,H=new k(J,U),await H.start(),W.start(),console.log(`[TetherCam] Signaling and Discovery services running`),Y(`[TetherCam] Signaling and Discovery services running`),U.on(`device-connected`,e=>{z?.webContents.send(`device-connected`,e),Y(`[Connection] Device connected: ${e.name} (${e.ip})`)}),W.on(`device-discovered`,e=>{z?.webContents.send(`device-discovered`,e),Y(`[Discovery] Found ${e.name} at ${e.ip}:${e.port}`)}),H.on(`sdp-offer`,e=>{z?.webContents.send(`sdp-offer`,e),Y(`[Signaling] SDP offer from ${e.clientIp??`unknown`}`)}),H.on(`ice-candidate`,e=>{z?.webContents.send(`ice-candidate`,e),Y(`[Signaling] ICE candidate from ${e.clientIp??`unknown`}`)}),H.on(`log`,e=>{Y(String(e))}),U.on(`device-disconnected`,e=>{z?.webContents.send(`device-disconnected`,e),Y(`[Connection] Device disconnected: ${e}`)}),U.on(`device-updated`,e=>{z?.webContents.send(`device-updated`,e)}),U.on(`stream-stats`,e=>{z?.webContents.send(`stream-stats`,e)})}function $(){c.ipcMain.handle(`get-devices`,()=>U?.getDevices()??[]),c.ipcMain.handle(`get-server-info`,()=>({port:J,addresses:H?.getLocalAddresses()??[]})),c.ipcMain.handle(`send-command`,(e,t,n,r)=>U?.sendCommand(t,n,r)),c.ipcMain.handle(`disconnect-device`,(e,t)=>U?.disconnectDevice(t)),c.ipcMain.handle(`start-virtual-camera`,async(e,t,n)=>{if(G){let e=await G.createPeerConnection(n);return Y(`[Virtual Camera] Started background WebRTC stream for ${t}`),e}throw Error(`Media pipeline not initialized`)}),c.ipcMain.handle(`capture-snapshot`,async(e,t)=>(Y(`[Snapshot] Capture requested for ${t}`),z?.webContents.send(`capture-snapshot-request`,t),!0)),c.ipcMain.handle(`save-snapshot`,async(e,t)=>{let n=`TetherCam_snapshot_${new Date().toISOString().replace(/[:.]/g,`-`)}.png`,{app:r}=await import(`electron`),i=r.getPath(`pictures`),a=l.default.join(i,n),o=t.replace(/^data:image\/png;base64,/,``);return(await import(`node:fs`)).writeFileSync(a,o,`base64`),Y(`[Snapshot] Saved to ${a}`),a}),c.ipcMain.handle(`stop-virtual-camera`,async()=>G?(G.stop(),Y(`[Virtual Camera] Stopped stream and background pipeline`),!0):!1),c.ipcMain.handle(`get-usb-devices`,async()=>await K?.getConnectedDevices()??[]),c.ipcMain.handle(`enable-usb-forwarding`,async(e,t)=>{let n=await K?.enableForwarding(t,4747,4747)??!1;return Y(`[USB] Forwarding for ${t}: ${n?`ok`:`failed`}`),n}),c.ipcMain.handle(`get-connection-url`,()=>E()),c.ipcMain.handle(`get-all-addresses`,()=>D()),c.ipcMain.handle(`get-diagnostic-logs`,()=>q),c.ipcMain.handle(`open-projector`,(e,t)=>{if(B){B.focus();return}if(B=new c.BrowserWindow({width:640,height:360,minWidth:320,minHeight:180,frame:!1,transparent:!1,alwaysOnTop:!0,backgroundColor:`#0a0a0f`,webPreferences:{preload:l.default.join(R,`preload.js`),contextIsolation:!0,nodeIntegration:!1,sandbox:!1}}),process.env.VITE_DEV_SERVER_URL)B.loadURL(`${process.env.VITE_DEV_SERVER_URL}?projector=true&deviceId=${t}`);else{let e=new URL(`file://${l.default.join(R,`../dist/index.html`)}`);e.searchParams.set(`projector`,`true`),e.searchParams.set(`deviceId`,t),B.loadURL(e.toString())}B.on(`closed`,()=>{B=null})}),c.ipcMain.handle(`close-projector`,()=>{B&&=(B.close(),null)}),c.ipcMain.handle(`toggle-projector-always-on-top`,()=>{if(B){let e=!B.isAlwaysOnTop();return B.setAlwaysOnTop(e,`screen-saver`),e}return!1}),c.ipcMain.handle(`resize-projector`,(e,t,n)=>{B&&B.setSize(t,n,!0)}),c.ipcMain.handle(`snap-projector`,(e,t)=>{if(!B)return;let{x:n,y:r,width:i,height:a}=c.screen.getPrimaryDisplay().workArea,o=B.getBounds(),s=n,l=r;t===`top-left`?(s=n,l=r):t===`top-right`?(s=n+i-o.width,l=r):t===`bottom-left`?(s=n,l=r+a-o.height):t===`bottom-right`&&(s=n+i-o.width,l=r+a-o.height),B.setBounds({x:s,y:l,width:o.width,height:o.height},!0)})}c.app.whenReady().then(async()=>{$(),X(),Z(),await Q()}),c.app.on(`window-all-closed`,()=>{process.platform!==`darwin`&&c.app.quit()}),c.app.on(`activate`,()=>{c.BrowserWindow.getAllWindows().length===0&&X()}),c.app.on(`before-quit`,()=>{H?.stop(),V?.destroy(),V=null});
+//#region \0rolldown/runtime.js
+var __create = Object.create;
+var __defProp = Object.defineProperty;
+var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __getProtoOf = Object.getPrototypeOf;
+var __hasOwnProp = Object.prototype.hasOwnProperty;
+var __copyProps = (to, from, except, desc) => {
+	if (from && typeof from === "object" || typeof from === "function") for (var keys = __getOwnPropNames(from), i = 0, n = keys.length, key; i < n; i++) {
+		key = keys[i];
+		if (!__hasOwnProp.call(to, key) && key !== except) __defProp(to, key, {
+			get: ((k) => from[k]).bind(null, key),
+			enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable
+		});
+	}
+	return to;
+};
+var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__getProtoOf(mod)) : {}, __copyProps(isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", {
+	value: mod,
+	enumerable: true
+}) : target, mod));
+//#endregion
+let electron = require("electron");
+let node_path = require("node:path");
+node_path = __toESM(node_path);
+let node_url = require("node:url");
+let express = require("express");
+express = __toESM(express);
+let node_http = require("node:http");
+node_http = __toESM(node_http);
+let ws = require("ws");
+let cors = require("cors");
+cors = __toESM(cors);
+let node_os = require("node:os");
+node_os = __toESM(node_os);
+let node_events = require("node:events");
+let uuid = require("uuid");
+let multicast_dns = require("multicast-dns");
+multicast_dns = __toESM(multicast_dns);
+let werift = require("werift");
+let fluent_ffmpeg = require("fluent-ffmpeg");
+fluent_ffmpeg = __toESM(fluent_ffmpeg);
+let ffmpeg_static = require("ffmpeg-static");
+ffmpeg_static = __toESM(ffmpeg_static);
+let node_child_process = require("node:child_process");
+let node_util = require("node:util");
+//#region electron/server/network-utils.ts
+function getAddressCandidates() {
+	const interfaces = node_os.default.networkInterfaces();
+	const addresses = [];
+	for (const name in interfaces) {
+		const iface = interfaces[name];
+		if (!iface) continue;
+		for (const entry of iface) if (entry.family === "IPv4") addresses.push({
+			interfaceName: name,
+			address: entry.address
+		});
+	}
+	return addresses;
+}
+function getPrimaryLocalAddress() {
+	const candidates = getAddressCandidates();
+	if (candidates.length === 0) return "127.0.0.1";
+	const scoreCandidate = (candidate) => {
+		const iface = candidate.interfaceName.toLowerCase();
+		const ip = candidate.address;
+		let score = 0;
+		if (iface.includes("wi-fi") || iface.includes("wifi") || iface.includes("wlan") || iface.includes("wireless")) score += 80;
+		if (/^en\d/.test(iface) || iface.includes("ethernet")) score += 40;
+		if (iface.includes("openvpn") || iface.includes("tailscale") || iface.includes("hyper-v") || iface.includes("vethernet") || iface.includes("virtual") || iface.includes("vmware") || iface.includes("docker") || iface.includes("loopback") || iface.includes("bluetooth")) score -= 70;
+		if (ip === "127.0.0.1" || ip === "::1") score -= 100;
+		if (/^192\.168\./.test(ip)) score += 30;
+		if (/^10\./.test(ip)) score += 20;
+		if (/^172\.(1[6-9]|2\d|3[0-1])\./.test(ip)) score += 15;
+		if (ip.startsWith("169.254.")) score -= 100;
+		return score;
+	};
+	return [...candidates].sort((a, b) => scoreCandidate(b) - scoreCandidate(a))[0].address;
+}
+function getConnectionUrl() {
+	return `ws://${getPrimaryLocalAddress()}:4747`;
+}
+function getAllLocalAddresses() {
+	return getAddressCandidates().map((c) => c.address).filter((a) => a !== "127.0.0.1" && a !== "::1");
+}
+//#endregion
+//#region electron/server/signaling-server.ts
+var _dirname$1 = "";
+try {
+	_dirname$1 = __dirname;
+} catch (e) {
+	_dirname$1 = node_path.default.dirname((0, node_url.fileURLToPath)({}.url));
+}
+var SignalingServer = class extends node_events.EventEmitter {
+	constructor(port, connectionManager) {
+		super();
+		this.pendingOffers = /* @__PURE__ */ new Map();
+		this.port = port;
+		this.connectionManager = connectionManager;
+		this.app = (0, express.default)();
+		this.app.use((0, cors.default)());
+		this.app.use(express.default.json());
+		this.server = node_http.default.createServer(this.app);
+		this.wss = new ws.WebSocketServer({ server: this.server });
+		this.setupHttpRoutes();
+		this.setupStaticRoutes();
+		this.setupWebSocket();
+	}
+	/**
+	* REST API endpoints for device synchronization.
+	*/
+	setupHttpRoutes() {
+		this.app.get("/api/info", (_req, res) => {
+			res.json({
+				app: "TetherCam",
+				version: "1.0.0",
+				platform: process.platform,
+				hostname: node_os.default.hostname(),
+				port: this.port
+			});
+		});
+		this.app.get("/api/devices", (_req, res) => {
+			res.json(this.connectionManager.getDevices());
+		});
+		this.app.post("/api/devices/:deviceId/command", (req, res) => {
+			const { deviceId } = req.params;
+			const { command, payload } = req.body;
+			if (this.connectionManager.sendCommand(deviceId, command, payload)) res.json({ status: "ok" });
+			else res.status(404).json({ error: "Device not found or not connected" });
+		});
+		this.app.delete("/api/devices/:deviceId", (req, res) => {
+			const { deviceId } = req.params;
+			this.connectionManager.disconnectDevice(deviceId);
+			res.json({ status: "ok" });
+		});
+		this.app.get("/api/connection-info", (_req, res) => {
+			const addresses = this.getLocalAddresses();
+			const primaryAddress = this.getPrimaryLocalAddress();
+			res.json({
+				addresses,
+				port: this.port,
+				url: `ws://${primaryAddress}:${this.port}`
+			});
+		});
+	}
+	/**
+	* Serve static built files from the /dist folder.
+	*/
+	setupStaticRoutes() {
+		const distPath = node_path.default.join(_dirname$1, "../../dist");
+		this.app.use(express.default.static(distPath));
+		this.app.use((req, res, next) => {
+			if (req.path.startsWith("/api")) return next();
+			res.sendFile(node_path.default.join(distPath, "index.html"));
+		});
+	}
+	/**
+	* WebSocket handler for real-time signaling and control.
+	*/
+	setupWebSocket() {
+		this.wss.on("connection", (ws$1, req) => {
+			const clientIp = req.socket.remoteAddress?.replace("::ffff:", "") ?? "unknown";
+			console.log(`[SignalingServer] WebSocket connection from ${clientIp}`);
+			this.emit("log", `[SignalingServer] WebSocket connection from ${clientIp}`);
+			let deviceId = null;
+			ws$1.on("message", (data) => {
+				try {
+					const message = JSON.parse(data.toString());
+					this.handleMessage(ws$1, message, clientIp, deviceId, (id) => {
+						deviceId = id;
+					});
+				} catch (err) {
+					console.error("[SignalingServer] Invalid message:", err);
+					this.emit("log", `[SignalingServer] Invalid message from ${clientIp}: ${String(err)}`);
+					ws$1.send(JSON.stringify({
+						type: "error",
+						message: "Invalid JSON"
+					}));
+				}
+			});
+			ws$1.on("close", () => {
+				if (deviceId) this.connectionManager.removeDevice(deviceId);
+				console.log(`[SignalingServer] WebSocket disconnected: ${clientIp}`);
+				this.emit("log", `[SignalingServer] WebSocket disconnected: ${clientIp}`);
+			});
+			ws$1.on("error", (err) => {
+				console.error(`[SignalingServer] WebSocket error from ${clientIp}:`, err.message);
+				this.emit("log", `[SignalingServer] WebSocket error from ${clientIp}: ${err.message}`);
+			});
+			ws$1.send(JSON.stringify({
+				type: "server-info",
+				hostname: node_os.default.hostname(),
+				platform: process.platform,
+				version: "1.0.0"
+			}));
+			const pingInterval = setInterval(() => {
+				if (ws$1.readyState === ws$1.OPEN) ws$1.ping();
+			}, 15e3);
+			ws$1.on("pong", () => {});
+			ws$1.on("close", () => clearInterval(pingInterval));
+			ws$1.on("error", () => clearInterval(pingInterval));
+		});
+	}
+	/**
+	* Route incoming WebSocket messages by type.
+	*/
+	handleMessage(ws$2, message, clientIp, activeDeviceId, setDeviceId) {
+		switch (message.type) {
+			case "register": {
+				const device = this.connectionManager.addDevice({
+					name: message.name ?? "Unknown Device",
+					model: message.model ?? "Unknown",
+					platform: message.platform ?? "android",
+					ip: clientIp,
+					connectionType: message.connectionType ?? "wifi",
+					ws: ws$2
+				});
+				setDeviceId(device.id);
+				setTimeout(() => {
+					this.connectionManager.sendCommand(device.id, "request-stream", {});
+					this.emit("log", `[SignalingServer] Sent request-stream to '${device.name}'`);
+				}, 500);
+				ws$2.send(JSON.stringify({
+					type: "registered",
+					deviceId: device.id,
+					message: "Device registered successfully"
+				}));
+				this.emit("log", `[SignalingServer] Registered device '${device.name}' from ${clientIp}`);
+				break;
+			}
+			case "sdp-offer": {
+				console.log(`[SignalingServer] Received SDP offer from ${clientIp}`);
+				const resolvedDeviceId = message.deviceId ?? activeDeviceId ?? void 0;
+				const offerSdp = message.sdp;
+				if (resolvedDeviceId && offerSdp) this.pendingOffers.set(resolvedDeviceId, {
+					sdp: offerSdp,
+					clientIp
+				});
+				this.emit("sdp-offer", {
+					deviceId: resolvedDeviceId,
+					sdp: offerSdp,
+					clientIp
+				});
+				break;
+			}
+			case "ice-candidate": {
+				console.log(`[SignalingServer] Received ICE candidate from ${clientIp}`);
+				const resolvedDeviceId = message.deviceId ?? activeDeviceId ?? void 0;
+				this.emit("ice-candidate", {
+					deviceId: resolvedDeviceId,
+					candidate: message.candidate,
+					clientIp
+				});
+				break;
+			}
+			case "device-status": {
+				const deviceId = message.deviceId;
+				if (deviceId) this.connectionManager.updateDevice(deviceId, {
+					battery: message.battery,
+					temperature: message.temperature,
+					streamSettings: message.streamSettings
+				});
+				break;
+			}
+			case "stream-stats":
+				this.connectionManager.emit("stream-stats", {
+					deviceId: message.deviceId,
+					latencyMs: message.latencyMs,
+					fps: message.fps,
+					bitrate: message.bitrate,
+					packetLoss: message.packetLoss,
+					resolution: message.resolution
+				});
+				break;
+			default: console.log(`[SignalingServer] Unknown message type: ${message.type}`);
+		}
+	}
+	/**
+	* Start listening on the configured port.
+	*/
+	async start() {
+		return new Promise((resolve, reject) => {
+			this.server.listen(this.port, "0.0.0.0", () => {
+				console.log(`[SignalingServer] HTTP + WebSocket server listening on 0.0.0.0:${this.port}`);
+				resolve();
+			});
+			this.server.on("error", reject);
+		});
+	}
+	/**
+	* Stop the server.
+	*/
+	stop() {
+		this.wss.clients.forEach((client) => client.close());
+		this.server.close();
+		console.log("[SignalingServer] Server stopped");
+	}
+	getLocalAddresses() {
+		return getAllLocalAddresses();
+	}
+	getPrimaryLocalAddress() {
+		return getPrimaryLocalAddress();
+	}
+	/** Returns and clears a cached SDP offer for a device (so late-mounting renderers can replay it) */
+	getPendingOffer(deviceId) {
+		const offer = this.pendingOffers.get(deviceId) ?? null;
+		if (offer) this.pendingOffers.delete(deviceId);
+		return offer;
+	}
+};
+//#endregion
+//#region electron/server/connection-manager.ts
+var ConnectionManager = class extends node_events.EventEmitter {
+	constructor() {
+		super();
+		this.devices = /* @__PURE__ */ new Map();
+	}
+	/**
+	* Register a new device connection from a WebSocket handshake.
+	*/
+	addDevice(info) {
+		const id = (0, uuid.v4)();
+		const device = {
+			id,
+			name: info.name,
+			model: info.model,
+			platform: info.platform,
+			ip: info.ip,
+			connectionType: info.connectionType,
+			status: "connected",
+			connectedAt: /* @__PURE__ */ new Date(),
+			streamSettings: {
+				resolution: "1080p",
+				fps: 30,
+				bitrate: 4e3,
+				codec: "H.264"
+			},
+			battery: 100,
+			temperature: 25,
+			ws: info.ws
+		};
+		this.devices.set(id, device);
+		this.emit("device-connected", this.sanitizeDevice(device));
+		console.log(`[ConnectionManager] Device connected: ${device.name} (${device.id})`);
+		return device;
+	}
+	/**
+	* Remove a device from the active connections.
+	*/
+	removeDevice(deviceId) {
+		const device = this.devices.get(deviceId);
+		if (device) {
+			device.status = "disconnected";
+			if (device.ws && device.ws.readyState === 1) device.ws.close();
+			this.devices.delete(deviceId);
+			this.emit("device-disconnected", deviceId);
+			console.log(`[ConnectionManager] Device disconnected: ${device.name} (${deviceId})`);
+		}
+	}
+	/**
+	* Update device metadata (battery, temp, stream settings, etc.)
+	*/
+	updateDevice(deviceId, updates) {
+		const device = this.devices.get(deviceId);
+		if (device) {
+			Object.assign(device, updates);
+			this.emit("device-updated", this.sanitizeDevice(device));
+		}
+	}
+	/**
+	* Send a control command to a specific device via WebSocket.
+	*/
+	sendCommand(deviceId, command, payload) {
+		const device = this.devices.get(deviceId);
+		if (device?.ws && device.ws.readyState === 1) {
+			device.ws.send(JSON.stringify({
+				type: "command",
+				command,
+				payload
+			}));
+			console.log(`[ConnectionManager] Sent command '${command}' to ${device.name}`);
+			return true;
+		}
+		return false;
+	}
+	/**
+	* Disconnect a specific device.
+	*/
+	disconnectDevice(deviceId) {
+		this.removeDevice(deviceId);
+	}
+	/**
+	* Get list of all connected devices (sanitized for IPC).
+	*/
+	getDevices() {
+		return Array.from(this.devices.values()).map((d) => this.sanitizeDevice(d));
+	}
+	/**
+	* Find a device by ID.
+	*/
+	getDevice(deviceId) {
+		return this.devices.get(deviceId);
+	}
+	/**
+	* Strip non-serializable fields (ws) before sending over IPC.
+	*/
+	sanitizeDevice(device) {
+		const { ws, ...rest } = device;
+		return rest;
+	}
+};
+//#endregion
+//#region electron/server/discovery-service.ts
+var SIGNALING_PORT$1 = 4747;
+var QUERY_INTERVAL_MS = 1e4;
+/** Unsolicited announcements help Windows clients/phones that miss passive query replies. */
+var ANNOUNCE_INTERVAL_MS = 3e3;
+var DiscoveryService = class extends node_events.EventEmitter {
+	constructor() {
+		super();
+		this.serviceName = "_TetherCam._tcp.local";
+		this.discoveredDevices = /* @__PURE__ */ new Map();
+		this.queryInterval = null;
+		this.announceInterval = null;
+		this.hostname = node_os.default.hostname();
+		this.mdns = (0, multicast_dns.default)();
+	}
+	start() {
+		console.log("[DiscoveryService] Starting mDNS discovery and advertisement");
+		this.advertise();
+		this.mdns.on("response", (response) => {
+			this.handleResponse(response);
+		});
+		this.queryInterval = setInterval(() => this.query(), QUERY_INTERVAL_MS);
+		this.announceInterval = setInterval(() => this.announce(), ANNOUNCE_INTERVAL_MS);
+		this.query();
+		this.announce();
+	}
+	/**
+	* Respond to browse queries and periodically broadcast our service (Windows-friendly).
+	*/
+	advertise() {
+		this.mdns.on("query", (query) => {
+			if ((query.questions ?? []).some((q) => q.name === this.serviceName || q.name === "_services._dns-sd._udp.local")) this.announce();
+		});
+	}
+	buildAdvertisementRecords(primaryAddress) {
+		const instanceName = `${this.hostname}.${this.serviceName}`;
+		const hostTarget = `${this.hostname}.local`;
+		return [
+			{
+				name: this.serviceName,
+				type: "PTR",
+				ttl: 120,
+				data: instanceName
+			},
+			{
+				name: instanceName,
+				type: "SRV",
+				ttl: 120,
+				data: {
+					port: SIGNALING_PORT$1,
+					target: hostTarget,
+					priority: 0,
+					weight: 0
+				}
+			},
+			{
+				name: hostTarget,
+				type: "A",
+				ttl: 120,
+				data: primaryAddress
+			},
+			{
+				name: hostTarget,
+				type: "TXT",
+				ttl: 120,
+				data: Buffer.from(`app=TetherCam&port=${SIGNALING_PORT$1}`)
+			}
+		];
+	}
+	/**
+	* Proactive unsolicited mDNS announcement (not only on query).
+	*/
+	announce() {
+		const primaryAddress = this.getPrimaryLocalAddress();
+		const answers = this.buildAdvertisementRecords(primaryAddress);
+		this.mdns.respond({ answers }, (err) => {
+			if (err) console.warn("[DiscoveryService] Announce failed:", err.message);
+		});
+	}
+	query() {
+		this.mdns.query({ questions: [{
+			name: this.serviceName,
+			type: "PTR"
+		}] });
+	}
+	handleResponse(response) {
+		const answers = [...response.answers ?? [], ...response.additionals ?? []];
+		const ptr = answers.find((a) => a.type === "PTR" && a.name === this.serviceName);
+		if (!ptr || typeof ptr.data !== "string") return;
+		const srv = answers.find((a) => a.type === "SRV" && a.name === ptr.data);
+		const srvTarget = srv && typeof srv.data === "object" && srv.data !== null && "target" in srv.data ? String(srv.data.target) : "";
+		const aRecord = answers.find((a) => a.type === "A" && a.name === srvTarget);
+		if (srv && aRecord && typeof aRecord.data === "string") {
+			const port = typeof srv.data === "object" && srv.data !== null && "port" in srv.data ? Number(srv.data.port) : SIGNALING_PORT$1;
+			const device = {
+				name: ptr.data.split(".")[0],
+				ip: aRecord.data,
+				port,
+				lastSeen: Date.now()
+			};
+			const id = `${device.ip}:${device.port}`;
+			if (!this.discoveredDevices.has(id)) {
+				this.discoveredDevices.set(id, device);
+				this.emit("device-discovered", device);
+			} else this.discoveredDevices.set(id, device);
+		}
+	}
+	getPrimaryLocalAddress() {
+		return getPrimaryLocalAddress();
+	}
+	getDiscoveredDevices() {
+		const now = Date.now();
+		for (const [id, device] of this.discoveredDevices.entries()) if (now - device.lastSeen > 3e4) this.discoveredDevices.delete(id);
+		return Array.from(this.discoveredDevices.values());
+	}
+	stop() {
+		if (this.queryInterval) {
+			clearInterval(this.queryInterval);
+			this.queryInterval = null;
+		}
+		if (this.announceInterval) {
+			clearInterval(this.announceInterval);
+			this.announceInterval = null;
+		}
+		this.mdns.destroy();
+	}
+};
+//#endregion
+//#region electron/server/media-pipeline.ts
+if (ffmpeg_static.default) fluent_ffmpeg.default.setFfmpegPath(ffmpeg_static.default);
+var MediaPipeline = class extends node_events.EventEmitter {
+	constructor() {
+		super();
+		this.pc = null;
+		this.ffmpegProcess = null;
+		this.rtspServer = null;
+	}
+	async createPeerConnection(offer) {
+		this.pc = new werift.RTCPeerConnection({ codecs: {
+			video: [{
+				mimeType: "video/H264",
+				clockRate: 9e4,
+				payloadType: 102,
+				rtcpFeedback: [
+					{ type: "nack" },
+					{
+						type: "nack",
+						parameter: "pli"
+					},
+					{ type: "goog-remb" }
+				]
+			}],
+			audio: [{
+				mimeType: "audio/OPUS",
+				clockRate: 48e3,
+				payloadType: 111
+			}]
+		} });
+		this.pc.onTrack.subscribe((track) => {
+			if (track.kind === "video") this.startFfmpegPipeline(track);
+		});
+		await this.pc.setRemoteDescription({
+			type: "offer",
+			sdp: offer
+		});
+		const answer = await this.pc.createAnswer();
+		await this.pc.setLocalDescription(answer);
+		return answer.sdp;
+	}
+	getPlatformOutputs() {
+		switch (node_os.default.platform()) {
+			case "win32": return ["video=OBS Virtual Camera", "audio=Virtual Cable"];
+			case "darwin": return ["video=TetherCam", "audio=BlackHole"];
+			case "linux": return ["video=/dev/video10", "audio=null_sink"];
+			default: return ["video=/dev/video10", "audio=null_sink"];
+		}
+	}
+	startFfmpegPipeline(track) {
+		console.log("[MediaPipeline] Starting FFmpeg pipeline to Virtual Camera + RTSP");
+		this.ffmpegProcess = (0, fluent_ffmpeg.default)().input(track).inputFormat("rtp");
+		const platform = node_os.default.platform();
+		if (platform === "win32") this.ffmpegProcess.outputFormat("dshow").videoCodec("rawvideo").pixelFormat("yuv420p").output("video=OBS Virtual Camera");
+		else if (platform === "darwin") this.ffmpegProcess.outputFormat("avfoundation").videoCodec("rawvideo").pixelFormat("yuv420p").output("TetherCam");
+		else this.ffmpegProcess.outputFormat("v4l2").videoCodec("rawvideo").pixelFormat("yuv420p").output("/dev/video10");
+		this.ffmpegProcess.output(`tcp://127.0.0.1:8554?listen`).outputFormat("mpegts").videoCodec("libx264").audioCodec("aac").outputOptions([
+			"-preset ultrafast",
+			"-tune zerolatency",
+			"-threads 2"
+		]).on("start", (cmd) => console.log("[FFmpeg VirtualCam + Broadcast] Started:", cmd)).on("error", (err) => console.error("[FFmpeg] Error:", err.message));
+		this.ffmpegProcess.run();
+	}
+	async createAudioPeerConnection(offer) {
+		const audioPc = new werift.RTCPeerConnection({ codecs: { audio: [{
+			mimeType: "audio/OPUS",
+			clockRate: 48e3,
+			payloadType: 111
+		}] } });
+		audioPc.onTrack.subscribe((track) => {
+			if (track.kind === "audio") this.startAudioPipeline(track);
+		});
+		await audioPc.setRemoteDescription({
+			type: "offer",
+			sdp: offer
+		});
+		const answer = await audioPc.createAnswer();
+		await audioPc.setLocalDescription(answer);
+		return answer.sdp;
+	}
+	startAudioPipeline(track) {
+		const platform = node_os.default.platform();
+		const audioFfmpeg = (0, fluent_ffmpeg.default)().input(track).inputFormat("rtp");
+		if (platform === "win32") audioFfmpeg.outputFormat("dshow").audioCodec("pcm_s16le").output("audio=Virtual Cable");
+		else if (platform === "darwin") audioFfmpeg.outputFormat("avfoundation").audioCodec("pcm_s16le").output(":TetherCam Audio");
+		else audioFfmpeg.outputFormat("pulse").audioCodec("pcm_s16le").output("TetherCam_Audio");
+		audioFfmpeg.on("start", () => console.log("[FFmpeg Audio] Started virtual microphone")).on("error", (err) => console.error("[FFmpeg Audio] Error:", err.message)).run();
+	}
+	stop() {
+		this.ffmpegProcess?.kill();
+		this.pc?.close();
+	}
+};
+//#endregion
+//#region electron/server/usb-service.ts
+var execAsync = (0, node_util.promisify)(node_child_process.exec);
+var UsbService = class extends node_events.EventEmitter {
+	constructor() {
+		super();
+	}
+	async getConnectedDevices() {
+		try {
+			const { stdout } = await execAsync("adb devices -l");
+			const lines = stdout.trim().split("\n");
+			const devices = [];
+			for (let i = 1; i < lines.length; i++) {
+				const line = lines[i].trim();
+				if (!line) continue;
+				const parts = line.split(/\s+/);
+				const id = parts[0];
+				const status = parts[1];
+				const modelMatch = line.match(/model:(\S+)/);
+				const model = modelMatch ? modelMatch[1] : "Unknown";
+				devices.push({
+					id,
+					model,
+					status
+				});
+			}
+			return devices;
+		} catch (err) {
+			console.error("[UsbService] Error listing devices:", err);
+			return [];
+		}
+	}
+	async enableForwarding(deviceId, localPort, remotePort) {
+		try {
+			await execAsync(`adb -s ${deviceId} forward tcp:${localPort} tcp:${remotePort}`);
+			console.log(`[UsbService] ADB Forward enabled: tcp:${localPort} -> tcp:${remotePort}`);
+			try {
+				await execAsync(`adb -s ${deviceId} reverse tcp:${localPort} tcp:${remotePort}`);
+				console.log(`[UsbService] ADB Reverse enabled: tcp:${localPort} -> tcp:${remotePort}`);
+			} catch (revErr) {
+				console.warn(`[UsbService] Warning setting up ADB reverse (unsupported on very old Android versions):`, revErr);
+			}
+			return true;
+		} catch (err) {
+			console.error("[UsbService] Error setting up USB port forwarding:", err);
+			return false;
+		}
+	}
+	async disableForwarding(localPort, deviceId) {
+		try {
+			await execAsync(`adb ${deviceId ? `-s ${deviceId} ` : ""} forward --remove tcp:${localPort}`);
+			console.log(`[UsbService] Removed ADB Forward for tcp:${localPort}`);
+		} catch (err) {
+			console.error("[UsbService] Error removing ADB Forward:", err);
+		}
+		try {
+			await execAsync(`adb ${deviceId ? `-s ${deviceId} ` : ""} reverse --remove tcp:${localPort}`);
+			console.log(`[UsbService] Removed ADB Reverse for tcp:${localPort}`);
+		} catch (err) {
+			console.error("[UsbService] Error removing ADB Reverse:", err);
+		}
+	}
+};
+//#endregion
+//#region electron/main.ts
+var _dirname = "";
+try {
+	_dirname = __dirname;
+} catch (e) {
+	_dirname = node_path.default.dirname((0, node_url.fileURLToPath)({}.url));
+}
+var mainWindow = null;
+var projectorWindow = null;
+var tray = null;
+var signalingServer = null;
+var connectionManager = null;
+var discoveryService = null;
+var mediaPipeline = null;
+var usbService = null;
+var diagnosticLogs = [];
+var SIGNALING_PORT = 4747;
+function pushDiagnosticLog(message) {
+	const line = `${(/* @__PURE__ */ new Date()).toISOString()} ${message}`;
+	diagnosticLogs.push(line);
+	if (diagnosticLogs.length > 200) diagnosticLogs.shift();
+	mainWindow?.webContents.send("diagnostic-log", line);
+}
+function createWindow() {
+	mainWindow = new electron.BrowserWindow({
+		width: 1280,
+		height: 820,
+		minWidth: 960,
+		minHeight: 600,
+		title: "TetherCam",
+		backgroundColor: "#0a0a0f",
+		titleBarStyle: "hiddenInset",
+		frame: process.platform === "darwin" ? false : true,
+		webPreferences: {
+			preload: node_path.default.join(_dirname, "preload.js"),
+			contextIsolation: true,
+			nodeIntegration: false,
+			sandbox: false
+		}
+	});
+	if (process.env.VITE_DEV_SERVER_URL) {
+		mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL);
+		mainWindow.webContents.openDevTools({ mode: "detach" });
+	} else mainWindow.loadFile(node_path.default.join(_dirname, "../dist/index.html"));
+	mainWindow.on("close", (event) => {
+		if (tray) {
+			event.preventDefault();
+			mainWindow?.hide();
+		}
+	});
+	mainWindow.on("closed", () => {
+		mainWindow = null;
+	});
+}
+function createTray() {
+	tray = new electron.Tray(electron.nativeImage.createEmpty());
+	tray.setToolTip("TetherCam");
+	const contextMenu = electron.Menu.buildFromTemplate([
+		{
+			label: "Show TetherCam",
+			click: () => mainWindow?.show()
+		},
+		{ type: "separator" },
+		{
+			label: "Quit",
+			click: () => {
+				tray?.destroy();
+				tray = null;
+				electron.app.quit();
+			}
+		}
+	]);
+	tray.setContextMenu(contextMenu);
+	tray.on("double-click", () => mainWindow?.show());
+}
+async function startServices() {
+	connectionManager = new ConnectionManager();
+	discoveryService = new DiscoveryService();
+	mediaPipeline = new MediaPipeline();
+	usbService = new UsbService();
+	signalingServer = new SignalingServer(SIGNALING_PORT, connectionManager);
+	await signalingServer.start();
+	discoveryService.start();
+	console.log(`[TetherCam] Signaling and Discovery services running`);
+	pushDiagnosticLog("[TetherCam] Signaling and Discovery services running");
+	connectionManager.on("device-connected", (device) => {
+		mainWindow?.webContents.send("device-connected", device);
+		pushDiagnosticLog(`[Connection] Device connected: ${device.name} (${device.ip})`);
+	});
+	discoveryService.on("device-discovered", (device) => {
+		mainWindow?.webContents.send("device-discovered", device);
+		pushDiagnosticLog(`[Discovery] Found ${device.name} at ${device.ip}:${device.port}`);
+	});
+	signalingServer.on("sdp-offer", (data) => {
+		mainWindow?.webContents.send("sdp-offer", data);
+		pushDiagnosticLog(`[Signaling] SDP offer from ${data.clientIp ?? "unknown"}`);
+	});
+	signalingServer.on("ice-candidate", (data) => {
+		mainWindow?.webContents.send("ice-candidate", data);
+		pushDiagnosticLog(`[Signaling] ICE candidate from ${data.clientIp ?? "unknown"}`);
+	});
+	signalingServer.on("log", (line) => {
+		pushDiagnosticLog(String(line));
+	});
+	connectionManager.on("device-disconnected", (deviceId) => {
+		mainWindow?.webContents.send("device-disconnected", deviceId);
+		pushDiagnosticLog(`[Connection] Device disconnected: ${deviceId}`);
+	});
+	connectionManager.on("device-updated", (device) => {
+		mainWindow?.webContents.send("device-updated", device);
+	});
+	connectionManager.on("stream-stats", (stats) => {
+		mainWindow?.webContents.send("stream-stats", stats);
+	});
+}
+function setupIpcHandlers() {
+	electron.ipcMain.handle("get-devices", () => {
+		return connectionManager?.getDevices() ?? [];
+	});
+	electron.ipcMain.handle("get-server-info", () => {
+		return {
+			port: SIGNALING_PORT,
+			addresses: signalingServer?.getLocalAddresses() ?? []
+		};
+	});
+	electron.ipcMain.handle("send-command", (_event, deviceId, command, payload) => {
+		return connectionManager?.sendCommand(deviceId, command, payload);
+	});
+	electron.ipcMain.handle("disconnect-device", (_event, deviceId) => {
+		return connectionManager?.disconnectDevice(deviceId);
+	});
+	electron.ipcMain.handle("start-virtual-camera", async (_event, deviceId, offer) => {
+		if (mediaPipeline) {
+			const answer = await mediaPipeline.createPeerConnection(offer);
+			pushDiagnosticLog(`[Virtual Camera] Started background WebRTC stream for ${deviceId}`);
+			return answer;
+		}
+		throw new Error("Media pipeline not initialized");
+	});
+	electron.ipcMain.handle("capture-snapshot", async (_event, deviceId) => {
+		pushDiagnosticLog(`[Snapshot] Capture requested for ${deviceId}`);
+		mainWindow?.webContents.send("capture-snapshot-request", deviceId);
+		return true;
+	});
+	electron.ipcMain.handle("save-snapshot", async (_event, dataUrl) => {
+		const filename = `TetherCam_snapshot_${(/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-")}.png`;
+		const { app } = await import("electron");
+		const picturesPath = app.getPath("pictures");
+		const filePath = node_path.default.join(picturesPath, filename);
+		const base64Data = dataUrl.replace(/^data:image\/png;base64,/, "");
+		(await import("node:fs")).writeFileSync(filePath, base64Data, "base64");
+		pushDiagnosticLog(`[Snapshot] Saved to ${filePath}`);
+		return filePath;
+	});
+	electron.ipcMain.handle("stop-virtual-camera", async () => {
+		if (mediaPipeline) {
+			mediaPipeline.stop();
+			pushDiagnosticLog("[Virtual Camera] Stopped stream and background pipeline");
+			return true;
+		}
+		return false;
+	});
+	electron.ipcMain.handle("get-usb-devices", async () => {
+		return await usbService?.getConnectedDevices() ?? [];
+	});
+	electron.ipcMain.handle("enable-usb-forwarding", async (_event, deviceId) => {
+		const ok = await usbService?.enableForwarding(deviceId, 4747, 4747) ?? false;
+		pushDiagnosticLog(`[USB] Forwarding for ${deviceId}: ${ok ? "ok" : "failed"}`);
+		return ok;
+	});
+	electron.ipcMain.handle("get-connection-url", () => {
+		return getConnectionUrl();
+	});
+	electron.ipcMain.handle("get-all-addresses", () => {
+		return getAllLocalAddresses();
+	});
+	electron.ipcMain.handle("get-pending-offer", (_event, deviceId) => {
+		return signalingServer?.getPendingOffer(deviceId) ?? null;
+	});
+	electron.ipcMain.handle("get-diagnostic-logs", () => {
+		return diagnosticLogs;
+	});
+	electron.ipcMain.handle("open-projector", (_event, deviceId) => {
+		if (projectorWindow) {
+			projectorWindow.focus();
+			return;
+		}
+		projectorWindow = new electron.BrowserWindow({
+			width: 640,
+			height: 360,
+			minWidth: 320,
+			minHeight: 180,
+			frame: false,
+			transparent: false,
+			alwaysOnTop: true,
+			backgroundColor: "#0a0a0f",
+			webPreferences: {
+				preload: node_path.default.join(_dirname, "preload.js"),
+				contextIsolation: true,
+				nodeIntegration: false,
+				sandbox: false
+			}
+		});
+		if (process.env.VITE_DEV_SERVER_URL) projectorWindow.loadURL(`${process.env.VITE_DEV_SERVER_URL}?projector=true&deviceId=${deviceId}`);
+		else {
+			const fileUrl = new URL(`file://${node_path.default.join(_dirname, "../dist/index.html")}`);
+			fileUrl.searchParams.set("projector", "true");
+			fileUrl.searchParams.set("deviceId", deviceId);
+			projectorWindow.loadURL(fileUrl.toString());
+		}
+		projectorWindow.on("closed", () => {
+			projectorWindow = null;
+		});
+	});
+	electron.ipcMain.handle("close-projector", () => {
+		if (projectorWindow) {
+			projectorWindow.close();
+			projectorWindow = null;
+		}
+	});
+	electron.ipcMain.handle("toggle-projector-always-on-top", () => {
+		if (projectorWindow) {
+			const state = !projectorWindow.isAlwaysOnTop();
+			projectorWindow.setAlwaysOnTop(state, "screen-saver");
+			return state;
+		}
+		return false;
+	});
+	electron.ipcMain.handle("resize-projector", (_event, width, height) => {
+		if (projectorWindow) projectorWindow.setSize(width, height, true);
+	});
+	electron.ipcMain.handle("snap-projector", (_event, position) => {
+		if (!projectorWindow) return;
+		const { x, y, width, height } = electron.screen.getPrimaryDisplay().workArea;
+		const winBounds = projectorWindow.getBounds();
+		let newX = x;
+		let newY = y;
+		if (position === "top-left") {
+			newX = x;
+			newY = y;
+		} else if (position === "top-right") {
+			newX = x + width - winBounds.width;
+			newY = y;
+		} else if (position === "bottom-left") {
+			newX = x;
+			newY = y + height - winBounds.height;
+		} else if (position === "bottom-right") {
+			newX = x + width - winBounds.width;
+			newY = y + height - winBounds.height;
+		}
+		projectorWindow.setBounds({
+			x: newX,
+			y: newY,
+			width: winBounds.width,
+			height: winBounds.height
+		}, true);
+	});
+}
+electron.app.whenReady().then(async () => {
+	setupIpcHandlers();
+	createWindow();
+	createTray();
+	await startServices();
+});
+electron.app.on("window-all-closed", () => {
+	if (process.platform !== "darwin") electron.app.quit();
+});
+electron.app.on("activate", () => {
+	if (electron.BrowserWindow.getAllWindows().length === 0) createWindow();
+});
+electron.app.on("before-quit", () => {
+	signalingServer?.stop();
+	tray?.destroy();
+	tray = null;
+});
+//#endregion

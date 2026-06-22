@@ -41,26 +41,24 @@ class BluetoothDiscoveryService {
   Stream<BluetoothDeviceInfo> discover() {
     _discoveryController = StreamController<BluetoothDeviceInfo>.broadcast();
 
-    _bt.startDiscovery().then((subscription) {
-      _discoverySub = subscription.listen((result) {
+    try {
+      _discoverySub = _bt.startDiscovery().listen((result) {
         if (result.device.name != null && result.device.name!.isNotEmpty) {
           _discoveryController?.add(BluetoothDeviceInfo(
             name: result.device.name!,
             address: result.device.address,
           ));
         }
-      })
-        ..onError((error) {
-          debugPrint('BT discovery error: $error');
-          _discoveryController?.addError(error);
-        })
-        ..onDone(() {
-          _discoveryController?.close();
-        });
-    }).catchError((error) {
+      }, onError: (error) {
+        debugPrint('BT discovery error: $error');
+        _discoveryController?.addError(error);
+      }, onDone: () {
+        _discoveryController?.close();
+      });
+    } catch (error) {
       debugPrint('BT start discovery error: $error');
       _discoveryController?.addError(error);
-    });
+    }
 
     return _discoveryController!.stream;
   }

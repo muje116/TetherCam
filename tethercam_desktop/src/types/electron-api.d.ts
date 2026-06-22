@@ -44,6 +44,7 @@ declare global {
     stopVirtualCamera: () => Promise<boolean>;
     captureSnapshot: (deviceId: string) => Promise<boolean>;
     saveSnapshot: (dataUrl: string) => Promise<string>;
+    getPendingOffer: (deviceId: string) => Promise<{ sdp: string; clientIp: string } | null>;
     openProjector: (deviceId: string) => Promise<void>;
     closeProjector: () => Promise<void>;
     toggleProjectorAlwaysOnTop: () => Promise<boolean>;

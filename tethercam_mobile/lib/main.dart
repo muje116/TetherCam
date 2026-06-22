@@ -48,7 +48,6 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
   bool _isProcessingScan = false;
   String? _myIp;
   bool _usbDetected = false;
-  bool _btAvailable = false;
   bool _btEnabled = false;
   bool _showBtPanel = false;
   StreamSubscription? _discoverySub;
@@ -72,18 +71,16 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
     final ip = await MobileNetworkInfo.getWifiIpAddress();
     final usb = await MobileNetworkInfo.isUsbConnected();
 
-    bool btAvail = false;
     bool btOn = false;
     try {
-      btAvail = await _btService.isAvailable;
-      btOn = await _btService.isEnabled;
+      final btAvail = await _btService.isAvailable;
+      btOn = btAvail ? await _btService.isEnabled : false;
     } catch (_) {}
 
     if (mounted) {
       setState(() {
         _myIp = ip;
         _usbDetected = usb;
-        _btAvailable = btAvail;
         _btEnabled = btOn;
       });
       if (usb) _autoConnectUsb();
@@ -284,7 +281,7 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
         Container(
           padding: const EdgeInsets.all(8),
           decoration: BoxDecoration(
-            color: const Color(0xFF6366F1).withOpacity(0.2),
+            color: const Color(0xFF6366F1).withValues(alpha: 0.2),
             borderRadius: BorderRadius.circular(10),
           ),
           child: const Icon(Icons.wifi, color: Color(0xFF818CF8), size: 22),
@@ -309,9 +306,9 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
       margin: const EdgeInsets.only(top: 8),
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       decoration: BoxDecoration(
-        color: Colors.green.withOpacity(0.12),
+        color: Colors.green.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.green.withOpacity(0.25)),
+        border: Border.all(color: Colors.green.withValues(alpha: 0.25)),
       ),
       child: Row(children: [
         const Icon(Icons.usb, color: Colors.green, size: 18),
@@ -325,7 +322,7 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: const Color(0xFF1E1E32).withOpacity(0.6),
+        color: const Color(0xFF1E1E32).withValues(alpha: 0.6),
         borderRadius: BorderRadius.circular(20),
         border: Border.all(color: Colors.white10),
       ),
@@ -375,7 +372,7 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
                 hintText: 'Enter IP address...',
                 hintStyle: const TextStyle(color: Colors.grey, fontSize: 13),
                 filled: true,
-                fillColor: Colors.white.withOpacity(0.05),
+                fillColor: Colors.white.withValues(alpha: 0.05),
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(12),
                   borderSide: BorderSide.none,
@@ -405,7 +402,7 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: const Color(0xFF1E1E32).withOpacity(0.6),
+        color: const Color(0xFF1E1E32).withValues(alpha: 0.6),
         borderRadius: BorderRadius.circular(16),
         border: Border.all(color: Colors.white10),
       ),
@@ -478,7 +475,7 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
           margin: const EdgeInsets.only(bottom: 8),
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
           decoration: BoxDecoration(
-            color: const Color(0xFF1E1E32).withOpacity(0.6),
+            color: const Color(0xFF1E1E32).withValues(alpha: 0.6),
             borderRadius: BorderRadius.circular(14),
             border: Border.all(color: Colors.white10),
           ),
@@ -489,7 +486,7 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
               Container(
                 padding: const EdgeInsets.all(8),
                 decoration: BoxDecoration(
-                  color: const Color(0xFF6366F1).withOpacity(0.15),
+                  color: const Color(0xFF6366F1).withValues(alpha: 0.15),
                   borderRadius: BorderRadius.circular(10),
                 ),
                 child: const Icon(Icons.computer, color: Color(0xFF818CF8), size: 22),
@@ -541,9 +538,9 @@ class _ActionCard extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 12),
         decoration: BoxDecoration(
-          color: color.withOpacity(0.1),
+          color: color.withValues(alpha: 0.1),
           borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: color.withOpacity(0.2)),
+          border: Border.all(color: color.withValues(alpha: 0.2)),
         ),
         child: Column(children: [
           if (isLoading)
