@@ -4,6 +4,7 @@
 
 list(APPEND FLUTTER_PLUGIN_LIST
   battery_plus
+  bonsoir_windows
   flutter_webrtc
   permission_handler_windows
 )

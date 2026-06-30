@@ -412,6 +412,7 @@ var ConnectionManager = class extends node_events.EventEmitter {
 //#endregion
 //#region electron/server/discovery-service.ts
 var SIGNALING_PORT$1 = 4747;
+var INVITE_PORT$1 = 4748;
 var QUERY_INTERVAL_MS = 1e4;
 /** Unsolicited announcements help Windows clients/phones that miss passive query replies. */
 var ANNOUNCE_INTERVAL_MS = 3e3;
@@ -475,7 +476,7 @@ var DiscoveryService = class extends node_events.EventEmitter {
 				name: hostTarget,
 				type: "TXT",
 				ttl: 120,
-				data: Buffer.from(`app=TetherCam&port=${SIGNALING_PORT$1}`)
+				data: Buffer.from(`app=TetherCam&role=desktop&port=${SIGNALING_PORT$1}`)
 			}
 		];
 	}
@@ -502,23 +503,61 @@ var DiscoveryService = class extends node_events.EventEmitter {
 		const srv = answers.find((a) => a.type === "SRV" && a.name === ptr.data);
 		const srvTarget = srv && typeof srv.data === "object" && srv.data !== null && "target" in srv.data ? String(srv.data.target) : "";
 		const aRecord = answers.find((a) => a.type === "A" && a.name === srvTarget);
+		const txtRecord = answers.find((a) => a.type === "TXT" && a.name === srvTarget);
 		if (srv && aRecord && typeof aRecord.data === "string") {
 			const port = typeof srv.data === "object" && srv.data !== null && "port" in srv.data ? Number(srv.data.port) : SIGNALING_PORT$1;
+			const txt = this.parseTxtRecord(txtRecord?.data);
+			const role = this.resolveRole(txt, port);
+			const invitePort = Number(txt.port) || (role === "mobile" ? port : INVITE_PORT$1);
+			const bluetoothAddress = txt.bt || void 0;
 			const device = {
 				name: ptr.data.split(".")[0],
-				ip: aRecord.data,
+				ip: txt.ip || aRecord.data,
 				port,
-				lastSeen: Date.now()
+				lastSeen: Date.now(),
+				role,
+				invitePort,
+				bluetoothAddress
 			};
-			const id = `${device.ip}:${device.port}`;
+			if (this.isSelfDesktop(device)) return;
+			if (role === "desktop") return;
+			const id = `${device.ip}:${device.invitePort}`;
 			if (!this.discoveredDevices.has(id)) {
 				this.discoveredDevices.set(id, device);
 				this.emit("device-discovered", device);
 			} else this.discoveredDevices.set(id, device);
 		}
 	}
+	parseTxtRecord(data) {
+		if (data == null) return {};
+		let text = "";
+		if (typeof data === "string") text = data;
+		else if (Buffer.isBuffer(data)) text = data.toString("utf8");
+		else if (Array.isArray(data)) text = data.map((entry) => Buffer.isBuffer(entry) ? entry.toString("utf8") : String(entry)).join("");
+		const params = {};
+		for (const part of text.split("&")) {
+			const eq = part.indexOf("=");
+			if (eq > 0) params[part.slice(0, eq)] = part.slice(eq + 1);
+		}
+		return params;
+	}
+	resolveRole(txt, port) {
+		if (txt.role === "mobile") return "mobile";
+		if (txt.role === "desktop") return "desktop";
+		if (port === INVITE_PORT$1) return "mobile";
+		if (port === SIGNALING_PORT$1) return "desktop";
+		return "unknown";
+	}
+	isSelfDesktop(device) {
+		if (device.role !== "desktop") return false;
+		return new Set(getAddressCandidates().map((c) => c.address)).has(device.ip);
+	}
 	getPrimaryLocalAddress() {
 		return getPrimaryLocalAddress();
+	}
+	triggerScan() {
+		this.query();
+		this.announce();
 	}
 	getDiscoveredDevices() {
 		const now = Date.now();
@@ -694,6 +733,49 @@ var UsbService = class extends node_events.EventEmitter {
 		}
 	}
 };
+//#endregion
+//#region electron/server/invite-client.ts
+var INVITE_PORT = 4748;
+var REQUEST_TIMEOUT_MS = 5e3;
+/**
+* Ask a phone on the LAN to connect to this desktop via its invite HTTP server.
+*/
+async function invitePhoneViaWifi(phoneIp, connectionUrl) {
+	const controller = new AbortController();
+	const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+	try {
+		const inviteUrl = `http://${phoneIp}:${INVITE_PORT}/api/invite?url=${encodeURIComponent(connectionUrl)}`;
+		const response = await fetch(inviteUrl, { signal: controller.signal });
+		if (!response.ok) return {
+			ok: false,
+			error: await response.text().catch(() => "") || `HTTP ${response.status}`
+		};
+		return { ok: true };
+	} catch (err) {
+		return {
+			ok: false,
+			error: err instanceof Error ? err.message : String(err)
+		};
+	} finally {
+		clearTimeout(timer);
+	}
+}
+/**
+* Probe whether a phone invite server is reachable (app open on LAN).
+*/
+async function probePhone(phoneIp) {
+	const controller = new AbortController();
+	const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+	try {
+		const response = await fetch(`http://${phoneIp}:${INVITE_PORT}/api/info`, { signal: controller.signal });
+		if (!response.ok) return false;
+		return (await response.json()).role === "mobile";
+	} catch {
+		return false;
+	} finally {
+		clearTimeout(timer);
+	}
+}
 //#endregion
 //#region electron/main.ts
 var _dirname = "";
@@ -873,6 +955,21 @@ function setupIpcHandlers() {
 	});
 	electron.ipcMain.handle("get-pending-offer", (_event, deviceId) => {
 		return signalingServer?.getPendingOffer(deviceId) ?? null;
+	});
+	electron.ipcMain.handle("get-discovered-devices", () => {
+		return discoveryService?.getDiscoveredDevices() ?? [];
+	});
+	electron.ipcMain.handle("scan-for-devices", () => {
+		discoveryService?.triggerScan();
+		return discoveryService?.getDiscoveredDevices() ?? [];
+	});
+	electron.ipcMain.handle("invite-phone", async (_event, phoneIp) => {
+		const result = await invitePhoneViaWifi(phoneIp, getConnectionUrl());
+		pushDiagnosticLog(`[Invite] ${phoneIp}: ${result.ok ? "sent" : `failed (${result.error ?? "unknown"})`}`);
+		return result;
+	});
+	electron.ipcMain.handle("probe-phone", async (_event, phoneIp) => {
+		return probePhone(phoneIp);
 	});
 	electron.ipcMain.handle("get-diagnostic-logs", () => {
 		return diagnosticLogs;

@@ -189,7 +189,7 @@ export class SignalingServer extends EventEmitter {
           model: (message.model as string) ?? 'Unknown',
           platform: (message.platform as 'android' | 'ios') ?? 'android',
           ip: clientIp,
-          connectionType: (message.connectionType as 'wifi' | 'usb' | 'hotspot') ?? 'wifi',
+          connectionType: (message.connectionType as 'wifi' | 'usb' | 'hotspot' | 'bluetooth') ?? 'wifi',
           ws,
         });
         setDeviceId(device.id);

@@ -7,7 +7,7 @@ export interface ConnectedDevice {
   model: string;
   platform: 'android' | 'ios';
   ip: string;
-  connectionType: 'wifi' | 'usb' | 'hotspot';
+  connectionType: 'wifi' | 'usb' | 'hotspot' | 'bluetooth';
   status: 'connected' | 'connecting' | 'disconnected' | 'buffering';
   connectedAt: Date;
   streamSettings: {
@@ -36,7 +36,7 @@ export class ConnectionManager extends EventEmitter {
     model: string;
     platform: 'android' | 'ios';
     ip: string;
-    connectionType: 'wifi' | 'usb' | 'hotspot';
+    connectionType: 'wifi' | 'usb' | 'hotspot' | 'bluetooth';
     ws: import('ws').WebSocket;
   }): ConnectedDevice {
     const id = uuidv4();

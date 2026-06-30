@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'services/discovery_service.dart';
 import 'services/mobile_network_info.dart';
+import 'services/connection_coordinator.dart';
 import 'services/bluetooth_discovery_service.dart';
 import 'pages/streaming_page.dart';
 import 'dart:async';
@@ -39,6 +40,7 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
   static const String _autoEndpoint = String.fromEnvironment('TC_AUTO_ENDPOINT', defaultValue: '');
   final DiscoveryService _discoveryService = DiscoveryService();
   final BluetoothDiscoveryService _btService = BluetoothDiscoveryService();
+  final ConnectionCoordinator _connectionCoordinator = ConnectionCoordinator();
   final List<DiscoveredDesktop> _desktops = [];
   final List<BluetoothDeviceInfo> _btDevices = [];
   final List<DiscoveredDesktop> _btDesktops = [];
@@ -65,6 +67,11 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
       });
     }
     _startDiscovery();
+    _connectionCoordinator.onDesktopInvite = (url, label) {
+      if (!mounted) return;
+      _connectToDesktop(url, label);
+    };
+    _connectionCoordinator.start();
   }
 
   Future<void> _initNetwork() async {
@@ -154,6 +161,7 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
     _discoverySub?.cancel();
     _discoveryStopTimer?.cancel();
     _btService.dispose();
+    _connectionCoordinator.stop();
     _manualEndpointController.dispose();
     super.dispose();
   }
@@ -177,6 +185,31 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
   }
 
   void _connectManual() => _connectToDesktop(_manualEndpointController.text.trim(), 'Manual');
+
+  void _connectBtDevice(BluetoothDeviceInfo device) {
+    final deviceToken = device.name.toLowerCase().split(' ').first;
+    DiscoveredDesktop? wifiMatch;
+    for (final d in _desktops) {
+      if (d.name.toLowerCase().contains(deviceToken)) {
+        wifiMatch = d;
+        break;
+      }
+    }
+
+    if (wifiMatch != null) {
+      _connectToDesktop('${wifiMatch.ip}:${wifiMatch.port}', wifiMatch.name);
+      return;
+    }
+
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(
+        '${device.name}: use WiFi scan or manual IP. Desktop can also tap Invite while this app is open.',
+      ),
+      duration: const Duration(seconds: 5),
+    ));
+    _startDiscovery();
+  }
 
   void _connectUsb() => _connectToDesktop('127.0.0.1:4747', 'USB (ADB)');
 
@@ -441,7 +474,7 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
                       child: const Text('Connect', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
                     )
                   : null,
-              onTap: tetherCamMatch ? () => _connectToDesktop(d.address, d.name) : null,
+              onTap: tetherCamMatch ? () => _connectBtDevice(d) : null,
             );
           }),
       ]),

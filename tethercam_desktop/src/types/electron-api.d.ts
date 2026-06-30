@@ -7,7 +7,7 @@ declare global {
     model: string;
     platform: 'android' | 'ios';
     ip: string;
-    connectionType: 'wifi' | 'usb' | 'hotspot';
+    connectionType: 'wifi' | 'usb' | 'hotspot' | 'bluetooth';
     status: 'connected' | 'connecting' | 'disconnected' | 'buffering';
     streamSettings: {
       resolution: string;
@@ -28,6 +28,17 @@ declare global {
     id: string;
     model?: string;
     manufacturer?: string;
+    status?: string;
+  }
+
+  interface DiscoveredPhone {
+    name: string;
+    ip: string;
+    port: number;
+    lastSeen: number;
+    role: 'mobile' | 'desktop' | 'unknown';
+    invitePort: number;
+    bluetoothAddress?: string;
   }
 
   interface ElectronAPI {
@@ -45,13 +56,17 @@ declare global {
     captureSnapshot: (deviceId: string) => Promise<boolean>;
     saveSnapshot: (dataUrl: string) => Promise<string>;
     getPendingOffer: (deviceId: string) => Promise<{ sdp: string; clientIp: string } | null>;
+    getDiscoveredDevices: () => Promise<DiscoveredPhone[]>;
+    scanForDevices: () => Promise<DiscoveredPhone[]>;
+    invitePhone: (phoneIp: string) => Promise<{ ok: boolean; error?: string }>;
+    probePhone: (phoneIp: string) => Promise<boolean>;
     openProjector: (deviceId: string) => Promise<void>;
     closeProjector: () => Promise<void>;
     toggleProjectorAlwaysOnTop: () => Promise<boolean>;
     resizeProjector: (width: number, height: number) => Promise<void>;
     snapProjector: (position: 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right') => Promise<void>;
     onDeviceConnected: (callback: (device: DeviceInfo) => void) => () => void;
-    onDeviceDiscovered: (callback: (device: { name: string; ip: string; port: number }) => void) => () => void;
+    onDeviceDiscovered: (callback: (device: DiscoveredPhone) => void) => () => void;
     onDeviceDisconnected: (callback: (deviceId: string) => void) => () => void;
     onDeviceUpdated: (callback: (device: DeviceInfo) => void) => () => void;
     onStreamStats: (callback: (stats: any) => void) => () => void;

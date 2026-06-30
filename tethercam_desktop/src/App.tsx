@@ -1,13 +1,18 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import QRCode from 'qrcode';
 import StreamReceiver from './components/StreamReceiver';
+import Logo from './components/Logo';
 import './App.css';
 
-interface DiscoveredDevice {
+interface PendingPhone {
   id: string;
   name: string;
   ip: string;
-  status: 'discovered' | 'connected';
+  port: number;
+  invitePort: number;
+  role: 'mobile' | 'desktop' | 'unknown';
+  bluetoothAddress?: string;
+  status: 'discovered' | 'inviting' | 'waiting';
 }
 
 interface StreamStats {
@@ -48,7 +53,10 @@ const ProjectorView: React.FC<{ deviceId: string }> = ({ deviceId }) => {
 const MainView: React.FC = () => {
   const [qrCodeUrl, setQrCodeUrl] = useState<string>('');
   const [connectionUrl, setConnectionUrl] = useState<string>('');
-  const [discoveredDevices, setDiscoveredDevices] = useState<DiscoveredDevice[]>([]);
+  const [discoveredPhones, setDiscoveredPhones] = useState<PendingPhone[]>([]);
+  const [phoneIpInput, setPhoneIpInput] = useState('');
+  const [inviteStatus, setInviteStatus] = useState<string>('');
+  const [usbDevices, setUsbDevices] = useState<{ id: string; model?: string; status?: string }[]>([]);
   const [connectedDevices, setConnectedDevices] = useState<DeviceInfo[]>([]);
   const [serverInfo, setServerInfo] = useState<{ port: number; addresses: string[] } | null>(null);
   const [allAddresses, setAllAddresses] = useState<string[]>([]);
@@ -76,19 +84,80 @@ const MainView: React.FC = () => {
   }, [isVirtualCamActive]);
 
   const scanUsbAndForward = useCallback(async () => {
-    const usbDevices = await window.electronAPI.getUsbDevices();
-    if (usbDevices.length === 0) {
+    const devices = await window.electronAPI.getUsbDevices();
+    setUsbDevices(devices);
+    if (devices.length === 0) {
       setUsbStatus('No USB phone detected');
       return;
     }
     let forwarded = 0;
-    for (const dev of usbDevices) {
+    for (const dev of devices) {
+      if (dev.status && dev.status !== 'device') continue;
       if (await window.electronAPI.enableUsbForwarding(dev.id)) {
         forwarded += 1;
       }
     }
-    setUsbStatus(`USB forwarded: ${forwarded}/${usbDevices.length}`);
+    setUsbStatus(`USB forwarded: ${forwarded}/${devices.length} — open TetherCam on phone (USB auto-connect)`);
   }, []);
+
+  const scanNetworkPhones = useCallback(async () => {
+    setSearchStatus('Scanning network...');
+    const found = await window.electronAPI.scanForDevices();
+    setDiscoveredPhones((prev) => {
+      const merged = new Map(prev.map((p) => [p.id, p]));
+      for (const phone of found) {
+        const id = `${phone.ip}:${phone.invitePort}`;
+        merged.set(id, {
+          id,
+          name: phone.name,
+          ip: phone.ip,
+          port: phone.port,
+          invitePort: phone.invitePort,
+          role: phone.role,
+          bluetoothAddress: phone.bluetoothAddress,
+          status: merged.get(id)?.status ?? 'discovered',
+        });
+      }
+      return Array.from(merged.values());
+    });
+    setSearchStatus(`Found ${found.length} phone(s) on LAN`);
+  }, []);
+
+  const invitePhone = useCallback(async (phoneIp: string, label?: string) => {
+    setInviteStatus(`Inviting ${label ?? phoneIp}...`);
+    const result = await window.electronAPI.invitePhone(phoneIp);
+    if (result.ok) {
+      setInviteStatus(`Invite sent to ${label ?? phoneIp} — waiting for connection`);
+      setDiscoveredPhones((prev) =>
+        prev.map((p) => (p.ip === phoneIp ? { ...p, status: 'waiting' as const } : p)),
+      );
+    } else {
+      setInviteStatus(`Invite failed: ${result.error ?? 'phone unreachable (is the app open?)'}`);
+    }
+  }, []);
+
+  const addPhoneManually = useCallback(async () => {
+    const ip = phoneIpInput.trim();
+    if (!ip) return;
+    const reachable = await window.electronAPI.probePhone(ip);
+    const id = `${ip}:4748`;
+    setDiscoveredPhones((prev) => {
+      if (prev.some((p) => p.ip === ip)) return prev;
+      return [
+        ...prev,
+        {
+          id,
+          name: reachable ? 'Phone (manual)' : 'Phone (unverified)',
+          ip,
+          port: 4748,
+          invitePort: 4748,
+          role: 'mobile' as const,
+          status: 'discovered' as const,
+        },
+      ];
+    });
+    await invitePhone(ip, 'manual phone');
+  }, [phoneIpInput, invitePhone]);
 
   const searchDevices = useCallback(async () => {
     setSearchStatus('Searching...');
@@ -96,8 +165,9 @@ const MainView: React.FC = () => {
     setConnectedDevices(activeDevices);
     setSelectedDeviceId((prev) => prev ?? (activeDevices[0]?.id ?? null));
     await scanUsbAndForward();
-    setSearchStatus(`Found ${activeDevices.length} connected device(s)`);
-  }, [scanUsbAndForward]);
+    await scanNetworkPhones();
+    setSearchStatus(`Connected: ${activeDevices.length} · scan complete`);
+  }, [scanUsbAndForward, scanNetworkPhones]);
 
   const handleSnapshot = useCallback(async () => {
     if (!selectedDeviceId) return;
@@ -131,19 +201,36 @@ const MainView: React.FC = () => {
 
       await scanUsbAndForward();
       if (cancelled) return;
+      await scanNetworkPhones();
+      if (cancelled) return;
       const logs = await window.electronAPI.getDiagnosticLogs();
       setDiagnosticLogs(logs.slice(-30));
     };
 
     void init();
     return () => { cancelled = true; };
-  }, [scanUsbAndForward]);
+  }, [scanUsbAndForward, scanNetworkPhones]);
 
   useEffect(() => {
-    const removeDiscovered = window.electronAPI.onDeviceDiscovered((device: { name: string; ip: string; port: number }) => {
-      setDiscoveredDevices((prev) => {
-        if (prev.find((d) => d.ip === device.ip)) return prev;
-        return [...prev, { ...device, status: 'discovered' as const, id: `${device.ip}:${device.port}` }];
+    const removeDiscovered = window.electronAPI.onDeviceDiscovered((device) => {
+      const id = `${device.ip}:${device.invitePort}`;
+      setDiscoveredPhones((prev) => {
+        if (prev.find((d) => d.id === id)) {
+          return prev.map((d) => (d.id === id ? { ...d, ...device, id, status: d.status } : d));
+        }
+        return [
+          ...prev,
+          {
+            id,
+            name: device.name,
+            ip: device.ip,
+            port: device.port,
+            invitePort: device.invitePort,
+            role: device.role,
+            bluetoothAddress: device.bluetoothAddress,
+            status: 'discovered' as const,
+          },
+        ];
       });
     });
 
@@ -153,6 +240,8 @@ const MainView: React.FC = () => {
         return [...prev, device];
       });
       setSelectedDeviceId((prev) => prev ?? device.id);
+      setDiscoveredPhones((prev) => prev.filter((p) => p.ip !== device.ip));
+      setInviteStatus(`${device.name} connected via ${device.connectionType}`);
     });
 
     const removeDisconnected = window.electronAPI.onDeviceDisconnected((deviceId: string) => {
@@ -188,17 +277,24 @@ const MainView: React.FC = () => {
 
   return (
     <div className="app-container">
+      <div className="bg-blob bg-blob--1"></div>
+      <div className="bg-blob bg-blob--2"></div>
+      <div className="grid-bg"></div>
+
       <header className="app-header">
-        <h1 className="gradient-text">TetherCam</h1>
+        <div className="header-left">
+          <Logo size={32} />
+          <h1 className="gradient-text">TetherCam</h1>
+        </div>
         <div className="status-badge">
           <div className="pulse"></div>
-          Server: {connectionUrl ? connectionUrl.replace('ws://', '') : `${serverInfo?.addresses?.[0] ?? 'loading'}:${serverInfo?.port ?? 4747}`}
+          {connectionUrl ? connectionUrl.replace('ws://', '') : `${serverInfo?.addresses?.[0] ?? 'loading'}:${serverInfo?.port ?? 4747}`}
         </div>
       </header>
 
       <main className="dashboard">
         <aside className="sidebar">
-          <section className="connect-section glass animate-fade">
+          <section className="glass animate-fade connect-section">
             <h3>Connect</h3>
             <div className="qr-container">
               {qrCodeUrl && <img src={qrCodeUrl} alt="QR" />}
@@ -206,36 +302,62 @@ const MainView: React.FC = () => {
             <p className="connect-url">Scan or use: <strong>{connectionUrl || 'loading...'}</strong></p>
             {allAddresses.length > 1 && (
               <div className="all-addresses">
-                <p style={{ fontSize: '0.68rem', color: 'var(--text-secondary)', marginBottom: '4px' }}>All available IPs:</p>
+                <p className="addr-hint">All available IPs:</p>
                 {allAddresses.map((addr) => (
-                  <code key={addr} className="addr-item" style={{ fontSize: '0.68rem', color: '#a5b4fc', display: 'block' }}>
-                    ws://{addr}:4747
-                  </code>
+                  <code key={addr} className="addr-item">ws://{addr}:4747</code>
                 ))}
               </div>
             )}
 
             <div className="discovery-list">
-              <h4>Discovered</h4>
-              <button className="btn-secondary-sm" onClick={searchDevices}>Search Devices</button>
+              <div className="discovery-header">
+                <h4>Add Phone</h4>
+                <button className="btn-secondary-sm" onClick={searchDevices}>Scan All</button>
+              </div>
               {searchStatus && <p className="search-status">{searchStatus}</p>}
-              {discoveredDevices.length === 0 ? (
-                <p className="empty-msg">Searching...</p>
+              {inviteStatus && <p className="search-status">{inviteStatus}</p>}
+
+              <div className="manual-add-row">
+                <input
+                  type="text"
+                  className="manual-ip-input"
+                  placeholder="Phone IP (e.g. 192.168.1.42)"
+                  value={phoneIpInput}
+                  onChange={(e) => setPhoneIpInput(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && void addPhoneManually()}
+                />
+                <button className="btn-primary-sm" onClick={() => void addPhoneManually()}>Invite</button>
+              </div>
+
+              {discoveredPhones.length === 0 ? (
+                <p className="empty-msg">No phones found — open TetherCam on your phone, then Scan All</p>
               ) : (
-                discoveredDevices.map((device) => (
-                  <div key={device.id} className="device-item-mini">
-                    <span>{device.name}</span>
-                    <button className="btn-primary-xs">Pair</button>
+                discoveredPhones.map((phone) => (
+                  <div key={phone.id} className="device-item-mini">
+                    <div className="device-info-left">
+                      <span>{phone.name}</span>
+                      <span className="platform-tag">{phone.ip}</span>
+                      {phone.bluetoothAddress && (
+                        <span className="platform-tag" title="Bluetooth address">BT</span>
+                      )}
+                    </div>
+                    <button
+                      className="btn-primary-sm"
+                      style={{ padding: '2px 12px', fontSize: '11px' }}
+                      onClick={() => void invitePhone(phone.ip, phone.name)}
+                    >
+                      {phone.status === 'waiting' ? 'Waiting…' : 'Invite'}
+                    </button>
                   </div>
                 ))
               )}
             </div>
           </section>
 
-          <section className="connected-section glass animate-fade">
+          <section className="glass animate-fade">
             <h3>Connected Devices</h3>
             {connectedDevices.length === 0 ? (
-              <p className="empty-msg" style={{ fontSize: '0.75rem' }}>No devices connected. Connect a phone via WiFi or USB.</p>
+              <p className="empty-msg">No devices connected. Add a phone via WiFi, USB, or Bluetooth pairing + Invite.</p>
             ) : (
               <div className="connected-list">
                 {connectedDevices.map((device) => (
@@ -247,7 +369,7 @@ const MainView: React.FC = () => {
                     <div className="device-info-left">
                       <span className="pulse-indicator online"></span>
                       <strong>{device.name || 'Phone'}</strong>
-                      <span className="platform-tag" style={{ fontSize: '0.6rem', marginLeft: '6px' }}>{device.platform || 'Unknown'}</span>
+                      <span className="platform-tag">{device.platform || 'Unknown'}</span>
                     </div>
                     <span className="device-battery">🔋{device.battery || 0}%</span>
                   </div>
@@ -256,56 +378,62 @@ const MainView: React.FC = () => {
             )}
           </section>
 
-          <section className="usb-section glass animate-fade">
+          <section className="glass animate-fade">
             <h3>USB (ADB)</h3>
             <p className="usb-status">{usbStatus}</p>
-            <button className="btn-secondary-sm" onClick={() => { void scanUsbAndForward(); }}>
+            {usbDevices.length > 0 && (
+              <div className="connected-list" style={{ marginBottom: 8 }}>
+                {usbDevices.map((dev) => (
+                  <div key={dev.id} className="device-item-mini">
+                    <span>{dev.model ?? dev.id}</span>
+                    <span className="platform-tag">{dev.status ?? 'unknown'}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            <button className="btn-secondary-sm" style={{ width: '100%' }} onClick={() => { void scanUsbAndForward(); }}>
               Scan & Forward
             </button>
           </section>
 
-          <section className="obs-controls glass animate-fade">
+          <section className="glass animate-fade obs-controls">
             <h3>Stream Output</h3>
             {selectedDeviceId ? (
               <>
                 <button className={`btn-virtual-cam ${isVirtualCamActive ? 'active' : ''}`} onClick={toggleVirtualCam}>
                   {isVirtualCamActive ? '🔴 Stop Virtual Cam' : '🟢 Start Virtual Cam'}
                 </button>
-                <button className="btn-secondary-sm" style={{ marginTop: '6px' }}
+                <button className="btn-secondary-sm" style={{ width: '100%', marginTop: '6px' }}
                   onClick={() => window.electronAPI.openProjector(selectedDeviceId)}>
                   📺 Open Borderless Projector
                 </button>
-                <button className="btn-secondary-sm" style={{ marginTop: '6px' }} onClick={handleSnapshot}>
+                <button className="btn-secondary-sm" style={{ width: '100%', marginTop: '6px' }} onClick={handleSnapshot}>
                   📸 Capture Snapshot
                 </button>
-                <button className={`btn-secondary-sm ${isRecording ? 'active' : ''}`} style={{ marginTop: '6px', color: isRecording ? '#ef4444' : undefined, borderColor: isRecording ? '#ef4444' : undefined }} onClick={() => setIsRecording(!isRecording)}>
+                <button className={`btn-secondary-sm ${isRecording ? 'recording' : ''}`} style={{ width: '100%', marginTop: '6px' }} onClick={() => setIsRecording(!isRecording)}>
                   {isRecording ? '⏹️ Stop Recording' : '⏺️ Record Stream'}
                 </button>
                 <div className="integration-help">
-                  <p style={{ margin: '0 0 6px 0', fontSize: '0.72rem', fontWeight: 700, color: '#a5b4fc' }}>📡 NDI via OBS (Recommended)</p>
-                  <ol style={{ margin: '0 0 8px 0', paddingLeft: '14px', fontSize: '0.68rem', lineHeight: '1.6', color: '#94a3b8' }}>
-                    <li>Install <strong style={{color:'#e2e8f0'}}>OBS Studio</strong> + <strong style={{color:'#e2e8f0'}}>obs-ndi</strong> plugin</li>
-                    <li>In OBS → Add <strong style={{color:'#e2e8f0'}}>Browser Source</strong>:<br/>
-                      <code style={{ fontSize: '0.65rem', background: 'rgba(0,0,0,0.4)', padding: '2px 4px', borderRadius: '3px', color: '#a5b4fc', display: 'block', marginTop: '2px', wordBreak: 'break-all' }}>
-                        {`http://localhost:4747/?projector=true&deviceId=${selectedDeviceId}`}
-                      </code>
+                  <p className="integration-title">📡 NDI via OBS (Recommended)</p>
+                  <ol>
+                    <li>Install <strong>OBS Studio</strong> + <strong>obs-ndi</strong> plugin</li>
+                    <li>In OBS → Add <strong>Browser Source</strong>:<br/>
+                      <code>http://localhost:4747/?projector=true&deviceId={selectedDeviceId}</code>
                     </li>
-                    <li>Or add <strong style={{color:'#e2e8f0'}}>Media Source</strong> (RTSP):<br/>
-                      <code style={{ fontSize: '0.65rem', background: 'rgba(0,0,0,0.4)', padding: '2px 4px', borderRadius: '3px', color: '#a5b4fc', display: 'block', marginTop: '2px' }}>
-                        tcp://127.0.0.1:8554
-                      </code>
+                    <li>Or add <strong>Media Source</strong> (RTSP):<br/>
+                      <code>tcp://127.0.0.1:8554</code>
                     </li>
-                    <li>Activate <strong style={{color:'#e2e8f0'}}>NDI Output</strong> in OBS Tools menu to broadcast as NDI on the network</li>
+                    <li>Activate <strong>NDI Output</strong> in OBS Tools menu to broadcast as NDI on the network</li>
                   </ol>
-                  <p style={{ margin: '0', fontSize: '0.65rem', color: '#64748b' }}>Other apps (vMix, Resolume, Wirecast) can pick up the NDI feed automatically.</p>
+                  <p className="integration-note">Other apps (vMix, Resolume, Wirecast) can pick up the NDI feed automatically.</p>
                 </div>
               </>
             ) : (
-              <p className="empty-msg" style={{ fontSize: '0.75rem' }}>Select a device to enable output options.</p>
+              <p className="empty-msg">Select a device to enable output options.</p>
             )}
           </section>
 
-          <section className="usb-section glass animate-fade">
+          <section className="glass animate-fade">
             <h3>Diagnostics</h3>
             <div className="diagnostic-panel">
               {diagnosticLogs.length === 0 ? (
@@ -380,6 +508,7 @@ const MainView: React.FC = () => {
               </div>
             ) : (
               <div className="no-selection">
+                <Logo size={64} />
                 <p>Select a camera from the grid below</p>
               </div>
             )}

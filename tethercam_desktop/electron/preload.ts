@@ -6,7 +6,7 @@ export interface DeviceInfo {
   model: string;
   platform: 'android' | 'ios';
   ip: string;
-  connectionType: 'wifi' | 'usb' | 'hotspot';
+  connectionType: 'wifi' | 'usb' | 'hotspot' | 'bluetooth';
   status: 'connected' | 'connecting' | 'disconnected' | 'buffering';
   streamSettings: {
     resolution: string;
@@ -32,6 +32,16 @@ export interface ServerInfo {
   addresses: string[];
 }
 
+export interface DiscoveredPhone {
+  name: string;
+  ip: string;
+  port: number;
+  lastSeen: number;
+  role: 'mobile' | 'desktop' | 'unknown';
+  invitePort: number;
+  bluetoothAddress?: string;
+}
+
 const electronAPI = {
   // Device management
   getDevices: (): Promise<DeviceInfo[]> => ipcRenderer.invoke('get-devices'),
@@ -49,6 +59,11 @@ const electronAPI = {
   saveSnapshot: (dataUrl: string): Promise<string> => ipcRenderer.invoke('save-snapshot', dataUrl),
   getPendingOffer: (deviceId: string): Promise<{ sdp: string; clientIp: string } | null> =>
     ipcRenderer.invoke('get-pending-offer', deviceId),
+  getDiscoveredDevices: (): Promise<DiscoveredPhone[]> => ipcRenderer.invoke('get-discovered-devices'),
+  scanForDevices: (): Promise<DiscoveredPhone[]> => ipcRenderer.invoke('scan-for-devices'),
+  invitePhone: (phoneIp: string): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('invite-phone', phoneIp),
+  probePhone: (phoneIp: string): Promise<boolean> => ipcRenderer.invoke('probe-phone', phoneIp),
 
   // Projector management
   openProjector: (deviceId: string): Promise<void> => ipcRenderer.invoke('open-projector', deviceId),

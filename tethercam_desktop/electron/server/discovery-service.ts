@@ -1,16 +1,22 @@
 import mDNS from 'multicast-dns';
 import { EventEmitter } from 'node:events';
 import os from 'node:os';
-import { getPrimaryLocalAddress as resolvePrimaryAddress } from './network-utils.js';
+import { getPrimaryLocalAddress as resolvePrimaryAddress, getAddressCandidates } from './network-utils.js';
+
+export type DiscoveredDeviceRole = 'mobile' | 'desktop' | 'unknown';
 
 export interface DiscoveredDevice {
   name: string;
   ip: string;
   port: number;
   lastSeen: number;
+  role: DiscoveredDeviceRole;
+  invitePort: number;
+  bluetoothAddress?: string;
 }
 
 const SIGNALING_PORT = 4747;
+const INVITE_PORT = 4748;
 const QUERY_INTERVAL_MS = 10_000;
 /** Unsolicited announcements help Windows clients/phones that miss passive query replies. */
 const ANNOUNCE_INTERVAL_MS = 3_000;
@@ -86,7 +92,7 @@ export class DiscoveryService extends EventEmitter {
         name: hostTarget,
         type: 'TXT',
         ttl: 120,
-        data: Buffer.from(`app=TetherCam&port=${SIGNALING_PORT}`),
+        data: Buffer.from(`app=TetherCam&role=desktop&port=${SIGNALING_PORT}`),
       },
     ];
   }
@@ -121,6 +127,7 @@ export class DiscoveryService extends EventEmitter {
       ? String((srv.data as { target: string }).target)
       : '';
     const aRecord = answers.find((a) => a.type === 'A' && a.name === srvTarget);
+    const txtRecord = answers.find((a) => a.type === 'TXT' && a.name === srvTarget);
 
     if (srv && aRecord && typeof aRecord.data === 'string') {
       const port =
@@ -128,14 +135,25 @@ export class DiscoveryService extends EventEmitter {
           ? Number((srv.data as { port: number }).port)
           : SIGNALING_PORT;
 
+      const txt = this.parseTxtRecord(txtRecord?.data);
+      const role = this.resolveRole(txt, port);
+      const invitePort = Number(txt.port) || (role === 'mobile' ? port : INVITE_PORT);
+      const bluetoothAddress = txt.bt || undefined;
+
       const device: DiscoveredDevice = {
         name: ptr.data.split('.')[0],
-        ip: aRecord.data,
+        ip: txt.ip || aRecord.data,
         port,
         lastSeen: Date.now(),
+        role,
+        invitePort,
+        bluetoothAddress,
       };
 
-      const id = `${device.ip}:${device.port}`;
+      if (this.isSelfDesktop(device)) return;
+      if (role === 'desktop') return;
+
+      const id = `${device.ip}:${device.invitePort}`;
       if (!this.discoveredDevices.has(id)) {
         this.discoveredDevices.set(id, device);
         this.emit('device-discovered', device);
@@ -145,8 +163,47 @@ export class DiscoveryService extends EventEmitter {
     }
   }
 
+  private parseTxtRecord(data: unknown): Record<string, string> {
+    if (data == null) return {};
+    let text = '';
+    if (typeof data === 'string') {
+      text = data;
+    } else if (Buffer.isBuffer(data)) {
+      text = data.toString('utf8');
+    } else if (Array.isArray(data)) {
+      text = data.map((entry) => (Buffer.isBuffer(entry) ? entry.toString('utf8') : String(entry))).join('');
+    }
+    const params: Record<string, string> = {};
+    for (const part of text.split('&')) {
+      const eq = part.indexOf('=');
+      if (eq > 0) {
+        params[part.slice(0, eq)] = part.slice(eq + 1);
+      }
+    }
+    return params;
+  }
+
+  private resolveRole(txt: Record<string, string>, port: number): DiscoveredDeviceRole {
+    if (txt.role === 'mobile') return 'mobile';
+    if (txt.role === 'desktop') return 'desktop';
+    if (port === INVITE_PORT) return 'mobile';
+    if (port === SIGNALING_PORT) return 'desktop';
+    return 'unknown';
+  }
+
+  private isSelfDesktop(device: DiscoveredDevice): boolean {
+    if (device.role !== 'desktop') return false;
+    const localIps = new Set(getAddressCandidates().map((c) => c.address));
+    return localIps.has(device.ip);
+  }
+
   private getPrimaryLocalAddress(): string {
     return resolvePrimaryAddress();
+  }
+
+  triggerScan(): void {
+    this.query();
+    this.announce();
   }
 
   getDiscoveredDevices(): DiscoveredDevice[] {

@@ -7,6 +7,7 @@ import { DiscoveryService } from './server/discovery-service.js';
 import { MediaPipeline } from './server/media-pipeline.js';
 import { UsbService } from './server/usb-service.js';
 import { getConnectionUrl as resolveConnectionUrl, getAllLocalAddresses } from './server/network-utils.js';
+import { invitePhoneViaWifi, probePhone } from './server/invite-client.js';
 
 let _dirname = '';
 try {
@@ -233,6 +234,28 @@ function setupIpcHandlers() {
 
   ipcMain.handle('get-pending-offer', (_event, deviceId: string) => {
     return signalingServer?.getPendingOffer(deviceId) ?? null;
+  });
+
+  ipcMain.handle('get-discovered-devices', () => {
+    return discoveryService?.getDiscoveredDevices() ?? [];
+  });
+
+  ipcMain.handle('scan-for-devices', () => {
+    discoveryService?.triggerScan();
+    return discoveryService?.getDiscoveredDevices() ?? [];
+  });
+
+  ipcMain.handle('invite-phone', async (_event, phoneIp: string) => {
+    const connectionUrl = resolveConnectionUrl();
+    const result = await invitePhoneViaWifi(phoneIp, connectionUrl);
+    pushDiagnosticLog(
+      `[Invite] ${phoneIp}: ${result.ok ? 'sent' : `failed (${result.error ?? 'unknown'})`}`,
+    );
+    return result;
+  });
+
+  ipcMain.handle('probe-phone', async (_event, phoneIp: string) => {
+    return probePhone(phoneIp);
   });
 
   ipcMain.handle('get-diagnostic-logs', () => {

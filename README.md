@@ -5,8 +5,9 @@ Use an Android phone as a low-latency camera source for desktop production workf
 ## What It Does
 
 - Streams mobile camera to desktop over WebRTC signaling (`ws://<pc-ip>:4747`)
-- Supports LAN and USB (ADB port-forward) connection modes
-- Provides QR-based onboarding, network discovery, and manual endpoint input
+- Supports **WiFi**, **USB (ADB)**, and **Bluetooth-assisted** pairing
+- Desktop can **scan for phones**, **invite by IP**, or wait for mobile to connect
+- Provides QR-based onboarding, mDNS discovery, and manual endpoint input
 - Exposes device control commands from desktop to mobile
 
 ## Project Structure
@@ -42,40 +43,47 @@ npm run dev
 ### 2. Mobile
 
 ```bash
-
-
+cd tethercam_mobile
+flutter pub get
 flutter run -d <device_id>
 ```
 
 ## Connection Methods
 
-### 1. Scan QR
+Phones always connect **to the desktop** WebSocket server (`ws://<pc-ip>:4747`). The desktop can discover phones and send invites; the phone can also connect on its own.
+
+### 1. Desktop adds a phone (WiFi)
+
+1. Start desktop and mobile apps (phone on same Wi‑Fi).
+2. On desktop **Add Phone**, click **Scan All** — phones running TetherCam appear in the list.
+3. Click **Invite** next to a phone, or enter the phone IP manually and click **Invite**.
+4. The phone receives the invite and connects automatically.
+
+### 2. Mobile finds desktop (WiFi / QR / manual)
+
+1. **WiFi**: On mobile, tap **WiFi → Find on network** and select the desktop.
+2. **QR**: Scan the QR shown in the desktop **Connect** panel.
+3. **Manual**: Enter `ws://<pc-ip>:4747` or just `<pc-ip>` on the phone.
+
+### 3. USB (ADB)
+
+1. Connect phone via USB with USB debugging enabled.
+2. On desktop, **USB (ADB) → Scan & Forward** (also runs at startup).
+3. On mobile, tap **USB** or wait for auto-connect via `127.0.0.1:4747`.
+
+### 4. Bluetooth (pairing aid)
+
+Bluetooth does not carry the video stream directly. Use it to pair phone and PC, then:
+
+1. Run **WiFi scan** on the phone (matches a paired PC name to a LAN desktop), **or**
+2. Use **desktop Invite** while the phone app is open on Wi‑Fi.
+
+### 5. Scan QR (mobile-initiated)
 
 1. Start desktop app.
 2. In **Connect**, verify QR is visible.
 3. On mobile, tap **Scan QR**.
 4. Scan desktop QR and wait for connection.
-
-### 2. Find on Network (LAN)
-
-1. Keep desktop app running.
-2. Ensure phone and PC are on the same subnet.
-3. On mobile, tap **Find on Network**.
-4. Select discovered desktop entry and connect.
-
-### 3. Manual Endpoint
-
-Use mobile **Manual endpoint** with one of:
-
-- `ws://<pc-ip>:4747`
-- `tethercam://<pc-ip>:4747`
-- `<pc-ip>` (port `4747` assumed)
-
-### 4. USB (ADB)
-
-1. Connect phone via USB and enable USB debugging.
-2. On desktop, open **USB (ADB)** and click **Scan & Forward** (or rely on startup auto-forward).
-3. On mobile, tap **USB (ADB)** to connect via `ws://127.0.0.1:4747`.
 
 ## Diagnostics
 
