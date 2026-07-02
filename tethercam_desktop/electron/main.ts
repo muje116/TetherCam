@@ -224,6 +224,12 @@ function setupIpcHandlers() {
     return ok;
   });
 
+  ipcMain.handle('launch-phone-app', async (_event, deviceId: string) => {
+    const ok = await usbService?.launchApp(deviceId) ?? false;
+    pushDiagnosticLog(`[USB] Launch app on ${deviceId}: ${ok ? 'ok' : 'failed'}`);
+    return ok;
+  });
+
   ipcMain.handle('get-connection-url', () => {
     return resolveConnectionUrl();
   });

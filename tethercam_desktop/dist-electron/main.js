@@ -718,6 +718,22 @@ var UsbService = class extends node_events.EventEmitter {
 			return false;
 		}
 	}
+	async launchApp(deviceId) {
+		try {
+			await execAsync(`adb -s ${deviceId} shell monkey -p com.tethercam.mobile -c android.intent.category.LAUNCHER 1`);
+			console.log(`[UsbService] Launched TetherCam on ${deviceId}`);
+			return true;
+		} catch (err) {
+			try {
+				await execAsync(`adb -s ${deviceId} shell am start -n com.tethercam.mobile/.MainActivity`);
+				console.log(`[UsbService] Launched TetherCam on ${deviceId} (alt)`);
+				return true;
+			} catch (err2) {
+				console.error(`[UsbService] Failed to launch app on ${deviceId}:`, err2);
+				return false;
+			}
+		}
+	}
 	async disableForwarding(localPort, deviceId) {
 		try {
 			await execAsync(`adb ${deviceId ? `-s ${deviceId} ` : ""} forward --remove tcp:${localPort}`);
@@ -945,6 +961,11 @@ function setupIpcHandlers() {
 	electron.ipcMain.handle("enable-usb-forwarding", async (_event, deviceId) => {
 		const ok = await usbService?.enableForwarding(deviceId, 4747, 4747) ?? false;
 		pushDiagnosticLog(`[USB] Forwarding for ${deviceId}: ${ok ? "ok" : "failed"}`);
+		return ok;
+	});
+	electron.ipcMain.handle("launch-phone-app", async (_event, deviceId) => {
+		const ok = await usbService?.launchApp(deviceId) ?? false;
+		pushDiagnosticLog(`[USB] Launch app on ${deviceId}: ${ok ? "ok" : "failed"}`);
 		return ok;
 	});
 	electron.ipcMain.handle("get-connection-url", () => {

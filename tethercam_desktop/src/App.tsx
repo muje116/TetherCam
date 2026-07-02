@@ -83,6 +83,16 @@ const MainView: React.FC = () => {
     return () => { void window.electronAPI.stopVirtualCamera(); };
   }, [isVirtualCamActive]);
 
+  const launchAppOnPhone = useCallback(async (deviceId: string) => {
+    const ok = await window.electronAPI.launchPhoneApp(deviceId);
+    if (ok) {
+      setUsbStatus(`App launched on device — waiting for it to connect...`);
+    } else {
+      setUsbStatus(`Could not launch app — open TetherCam manually on the phone`);
+    }
+    return ok;
+  }, []);
+
   const scanUsbAndForward = useCallback(async () => {
     const devices = await window.electronAPI.getUsbDevices();
     setUsbDevices(devices);
@@ -97,8 +107,12 @@ const MainView: React.FC = () => {
         forwarded += 1;
       }
     }
-    setUsbStatus(`USB forwarded: ${forwarded}/${devices.length} — open TetherCam on phone (USB auto-connect)`);
-  }, []);
+    setUsbStatus(`USB forwarded: ${forwarded}/${devices.length} — launching app...`);
+    for (const dev of devices) {
+      if (dev.status && dev.status !== 'device') continue;
+      await launchAppOnPhone(dev.id);
+    }
+  }, [launchAppOnPhone]);
 
   const scanNetworkPhones = useCallback(async () => {
     setSearchStatus('Scanning network...');
@@ -383,16 +397,41 @@ const MainView: React.FC = () => {
             <p className="usb-status">{usbStatus}</p>
             {usbDevices.length > 0 && (
               <div className="connected-list" style={{ marginBottom: 8 }}>
-                {usbDevices.map((dev) => (
-                  <div key={dev.id} className="device-item-mini">
-                    <span>{dev.model ?? dev.id}</span>
-                    <span className="platform-tag">{dev.status ?? 'unknown'}</span>
-                  </div>
-                ))}
+                {usbDevices.map((dev) => {
+                  const alreadyConnected = connectedDevices.some(
+                    (c) => c.connectionType === 'usb' && (c.ip === '127.0.0.1' || c.model === dev.model || c.name.includes(dev.model ?? dev.id))
+                  );
+                  return (
+                    <div key={dev.id} className="device-item-mini">
+                      <div className="device-info-left">
+                        {alreadyConnected ? (
+                          <span className="pulse-indicator online"></span>
+                        ) : (
+                          <span style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--muted)', display: 'inline-block' }} />
+                        )}
+                        <span>{dev.model ?? dev.id}</span>
+                        <span className="platform-tag">{dev.status ?? 'unknown'}</span>
+                      </div>
+                      <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                        {alreadyConnected ? (
+                          <span className="platform-tag" style={{ color: 'var(--accent2)' }}>Connected</span>
+                        ) : (
+                          <button
+                            className="btn-primary-sm"
+                            style={{ padding: '2px 10px', fontSize: '11px' }}
+                            onClick={() => void launchAppOnPhone(dev.id)}
+                          >
+                            Launch App
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             )}
             <button className="btn-secondary-sm" style={{ width: '100%' }} onClick={() => { void scanUsbAndForward(); }}>
-              Scan & Forward
+              Scan, Forward & Launch
             </button>
           </section>
 
@@ -522,7 +561,26 @@ const MainView: React.FC = () => {
                 onClick={() => setSelectedDeviceId(device.id)}
               >
                 <div className="mini-preview">
-                  <StreamReceiver deviceId={device.id} isVirtualCamActive={false} muted={true} />
+                  {selectedDeviceId === device.id ? (
+                    <div
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        width: '100%',
+                        height: '100%',
+                        color: 'var(--muted)',
+                        fontSize: '0.8rem',
+                        textAlign: 'center',
+                        padding: '12px',
+                        boxSizing: 'border-box',
+                      }}
+                    >
+                      Live preview is active in the main stage
+                    </div>
+                  ) : (
+                    <StreamReceiver deviceId={device.id} isVirtualCamActive={false} muted={true} />
+                  )}
                 </div>
                 <div className="mini-info">
                   <span>{device.name}</span>

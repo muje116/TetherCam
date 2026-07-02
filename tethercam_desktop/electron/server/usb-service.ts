@@ -65,6 +65,23 @@ export class UsbService extends EventEmitter {
     }
   }
 
+  async launchApp(deviceId: string): Promise<boolean> {
+    try {
+      await execAsync(`adb -s ${deviceId} shell monkey -p com.tethercam.mobile -c android.intent.category.LAUNCHER 1`);
+      console.log(`[UsbService] Launched TetherCam on ${deviceId}`);
+      return true;
+    } catch (err) {
+      try {
+        await execAsync(`adb -s ${deviceId} shell am start -n com.tethercam.mobile/.MainActivity`);
+        console.log(`[UsbService] Launched TetherCam on ${deviceId} (alt)`);
+        return true;
+      } catch (err2) {
+        console.error(`[UsbService] Failed to launch app on ${deviceId}:`, err2);
+        return false;
+      }
+    }
+  }
+
   async disableForwarding(localPort: number, deviceId?: string): Promise<void> {
     try {
       const devArg = deviceId ? `-s ${deviceId} ` : '';

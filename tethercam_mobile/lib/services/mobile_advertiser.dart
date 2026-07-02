@@ -28,7 +28,6 @@ class MobileAdvertiser {
       );
 
       _broadcast = BonsoirBroadcast(service: service);
-      await _broadcast!.initialize();
       await _broadcast!.start();
       _running = true;
       debugPrint('[MobileAdvertiser] Broadcasting $deviceName at $ipAddress');

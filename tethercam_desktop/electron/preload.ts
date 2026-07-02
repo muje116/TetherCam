@@ -51,6 +51,7 @@ const electronAPI = {
   disconnectDevice: (deviceId: string): Promise<void> => ipcRenderer.invoke('disconnect-device', deviceId),
   getUsbDevices: (): Promise<any[]> => ipcRenderer.invoke('get-usb-devices'),
   enableUsbForwarding: (deviceId: string): Promise<boolean> => ipcRenderer.invoke('enable-usb-forwarding', deviceId),
+  launchPhoneApp: (deviceId: string): Promise<boolean> => ipcRenderer.invoke('launch-phone-app', deviceId),
   getDiagnosticLogs: (): Promise<string[]> => ipcRenderer.invoke('get-diagnostic-logs'),
   startVirtualCamera: (deviceId: string, offer: string): Promise<string> =>
     ipcRenderer.invoke('start-virtual-camera', deviceId, offer),

@@ -15,6 +15,8 @@ const StreamReceiver: React.FC<StreamReceiverProps> = ({ deviceId, isVirtualCamA
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const recordedChunksRef = useRef<BlobPart[]>([]);
+  const lastHandledOfferRef = useRef<string | null>(null);
+  const pendingIceCandidatesRef = useRef<RTCIceCandidateInit[]>([]);
 
   useEffect(() => {
     if (isVirtualCamActive) {
@@ -41,6 +43,43 @@ const StreamReceiver: React.FC<StreamReceiverProps> = ({ deviceId, isVirtualCamA
     });
     pcRef.current = pc;
 
+    const sendAnswer = async (sdp: string) => {
+      await window.electronAPI.sendCommand(deviceId, 'sdp-answer', sdp);
+    };
+
+    const flushPendingIceCandidates = async () => {
+      if (!pc.remoteDescription) {
+        return;
+      }
+
+      const pendingCandidates = [...pendingIceCandidatesRef.current];
+      pendingIceCandidatesRef.current = [];
+
+      for (const candidate of pendingCandidates) {
+        await pc.addIceCandidate(new RTCIceCandidate(candidate));
+      }
+    };
+
+    const applyOffer = async (sdp: string) => {
+      if (!sdp || lastHandledOfferRef.current === sdp) {
+        return;
+      }
+
+      if (pc.signalingState !== 'stable') {
+        console.warn('[StreamReceiver] Ignoring duplicate or overlapping offer for', deviceId);
+        return;
+      }
+
+      lastHandledOfferRef.current = sdp;
+      await pc.setRemoteDescription(new RTCSessionDescription({ type: 'offer', sdp }));
+      await flushPendingIceCandidates();
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+      if (answer.sdp) {
+        await sendAnswer(answer.sdp);
+      }
+    };
+
     pc.ontrack = (event) => {
       if (videoRef.current) {
         videoRef.current.srcObject = event.streams[0];
@@ -50,31 +89,43 @@ const StreamReceiver: React.FC<StreamReceiverProps> = ({ deviceId, isVirtualCamA
 
     pc.onicecandidate = (event) => {
       if (event.candidate) {
-        window.electronAPI.sendCommand(deviceId, 'ice-candidate', event.candidate);
+        const candidate = event.candidate.toJSON();
+        window.electronAPI.sendCommand(deviceId, 'ice-candidate', candidate);
       }
     };
 
     const removeOffer = window.electronAPI.onSdpOffer(async (data: { deviceId?: string; clientIp?: string; sdp: string }) => {
       if (data.deviceId !== deviceId && data.clientIp !== deviceId) return;
-      await pc.setRemoteDescription(new RTCSessionDescription({ type: 'offer', sdp: data.sdp }));
-      const answer = await pc.createAnswer();
-      await pc.setLocalDescription(answer);
-      window.electronAPI.sendCommand(deviceId, 'sdp-answer', answer.sdp);
+      try {
+        await applyOffer(data.sdp);
+      } catch (error) {
+        console.error('[StreamReceiver] Failed to apply SDP offer:', error);
+      }
     });
 
     const removeIce = window.electronAPI.onIceCandidate(async (data: { deviceId?: string; clientIp?: string; candidate: RTCIceCandidateInit }) => {
       if (data.deviceId !== deviceId && data.clientIp !== deviceId) return;
-      await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+      try {
+        if (!pc.remoteDescription) {
+          pendingIceCandidatesRef.current.push(data.candidate);
+          return;
+        }
+
+        await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+      } catch (error) {
+        console.error('[StreamReceiver] Failed to add ICE candidate:', error);
+      }
     });
 
     // Replay any offer that arrived before this component mounted (timing race fix)
     window.electronAPI.getPendingOffer(deviceId).then(async (pending) => {
       if (pending && pc.signalingState === 'stable') {
         console.log('[StreamReceiver] Replaying cached SDP offer for', deviceId);
-        await pc.setRemoteDescription(new RTCSessionDescription({ type: 'offer', sdp: pending.sdp }));
-        const answer = await pc.createAnswer();
-        await pc.setLocalDescription(answer);
-        window.electronAPI.sendCommand(deviceId, 'sdp-answer', answer.sdp);
+        try {
+          await applyOffer(pending.sdp);
+        } catch (error) {
+          console.error('[StreamReceiver] Failed to replay cached SDP offer:', error);
+        }
       }
     }).catch(() => {});
 
@@ -116,6 +167,8 @@ const StreamReceiver: React.FC<StreamReceiverProps> = ({ deviceId, isVirtualCamA
     return () => {
       pc.close();
       pcRef.current = null;
+      lastHandledOfferRef.current = null;
+      pendingIceCandidatesRef.current = [];
       clearInterval(statsInterval);
       removeOffer();
       removeIce();

@@ -59,7 +59,7 @@ class WebRTCService {
 
   Map<String, dynamic> get _iceServers => {
     'iceServers': [
-      {'url': 'stun:stun.l.google.com:19302'},
+      {'urls': 'stun:stun.l.google.com:19302'},
     ]
   };
 
@@ -121,74 +121,27 @@ class WebRTCService {
       }
     };
 
-    RTCSessionDescription offer = await _peerConnection!.createOffer(_configConstraints);
-
-    String sdp = offer.sdp!;
-
-    if (_config.codec == VideoCodec.h264) {
-      sdp = _preferCodec(sdp, 'H264');
-    } else {
-      sdp = _preferCodec(sdp, 'H265');
+    final offer = await _peerConnection!.createOffer(_configConstraints);
+    if (offer.sdp == null || offer.sdp!.isEmpty) {
+      throw StateError('WebRTC createOffer returned an empty SDP.');
     }
 
-    sdp = _setBitrate(sdp, _config.bitrate);
-
-    await _peerConnection!.setLocalDescription(
-      RTCSessionDescription(sdp, 'offer'),
-    );
+    // Use the native offer unchanged. Manual SDP munging was producing
+    // invalid session descriptions on Android and breaking setLocalDescription.
+    await _peerConnection!.setLocalDescription(offer);
     debugPrint('[PHASE] OFFER SEND');
+
+    final localDescription = await _peerConnection!.getLocalDescription();
+    final localSdp = localDescription?.sdp;
+    if (localSdp == null || localSdp.isEmpty) {
+      throw StateError('WebRTC localDescription SDP is empty after setLocalDescription.');
+    }
 
     _signalingClient.send({
       'type': 'sdp-offer',
       'deviceId': _signalingClient.deviceId,
-      'sdp': sdp,
+      'sdp': localSdp,
     });
-  }
-
-  String _preferCodec(String sdp, String codec) {
-    if (codec == 'H264') {
-      if (sdp.contains('H264')) {
-        final lines = sdp.split('\n');
-        final h264Payloads = <String>[];
-        for (final line in lines) {
-          if (line.startsWith('a=rtpmap:') && line.contains('H264')) {
-            h264Payloads.add(line.split(':')[1].split(' ')[0]);
-          }
-        }
-        if (h264Payloads.isNotEmpty) {
-          final result = <String>[];
-          for (final line in lines) {
-            if (line.startsWith('m=video')) {
-              result.add('${line.split(' ').take(3).join(' ')} ${h264Payloads.join(' ')}');
-            } else {
-              result.add(line);
-            }
-          }
-          return result.join('\n');
-        }
-      }
-    }
-    return sdp;
-  }
-
-  String _setBitrate(String sdp, int bitrateKbps) {
-    final lines = sdp.split('\n');
-    final result = <String>[];
-    bool videoSection = false;
-    for (final line in lines) {
-      if (line.startsWith('m=video')) {
-        videoSection = true;
-      } else if (line.startsWith('m=audio')) {
-        videoSection = false;
-      }
-      if (videoSection && line.startsWith('a=mid')) {
-        result.add(line);
-        result.add('b=AS:$bitrateKbps');
-        continue;
-      }
-      result.add(line);
-    }
-    return result.join('\n');
   }
 
   Future<void> handleAnswer(String sdp) async {

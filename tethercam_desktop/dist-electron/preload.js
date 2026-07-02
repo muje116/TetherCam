@@ -8,6 +8,7 @@ electron.contextBridge.exposeInMainWorld("electronAPI", {
 	disconnectDevice: (deviceId) => electron.ipcRenderer.invoke("disconnect-device", deviceId),
 	getUsbDevices: () => electron.ipcRenderer.invoke("get-usb-devices"),
 	enableUsbForwarding: (deviceId) => electron.ipcRenderer.invoke("enable-usb-forwarding", deviceId),
+	launchPhoneApp: (deviceId) => electron.ipcRenderer.invoke("launch-phone-app", deviceId),
 	getDiagnosticLogs: () => electron.ipcRenderer.invoke("get-diagnostic-logs"),
 	startVirtualCamera: (deviceId, offer) => electron.ipcRenderer.invoke("start-virtual-camera", deviceId, offer),
 	stopVirtualCamera: () => electron.ipcRenderer.invoke("stop-virtual-camera"),

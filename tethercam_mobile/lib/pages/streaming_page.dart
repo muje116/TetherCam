@@ -7,6 +7,7 @@ import '../services/discovery_service.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 import '../services/notification_service.dart';
 import 'package:battery_plus/battery_plus.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 class StreamingPage extends StatefulWidget {
   final DiscoveredDesktop desktop;
@@ -23,6 +24,8 @@ class _StreamingPageState extends State<StreamingPage> {
   late WebRTCService _webRTCService;
 
   bool _isStreaming = false;
+  bool _isStartingStream = false;
+  bool _isInitializingCamera = true;
   ConnectionStatus _status = ConnectionStatus.disconnected;
   String? _lastSocketError;
   bool _showQuickSettings = false;
@@ -72,7 +75,25 @@ class _StreamingPageState extends State<StreamingPage> {
   }
 
   Future<void> _initialize() async {
-    await _cameraService.initialize();
+    final permissionsReady = await _ensureMediaPermissions();
+    if (!permissionsReady) {
+      if (mounted) {
+        setState(() {
+          _lastSocketError = 'Camera and microphone permissions are required to stream.';
+        });
+      }
+      return;
+    }
+
+    try {
+      await _cameraService.initialize();
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isInitializingCamera = false;
+        });
+      }
+    }
     if (mounted) setState(() {});
 
     _signalingClient.statusStream.listen((status) {
@@ -165,14 +186,23 @@ class _StreamingPageState extends State<StreamingPage> {
             break;
           case 'request-stream':
             // Desktop is requesting we start streaming immediately
-            if (!_isStreaming && _status == ConnectionStatus.connected) {
+            if (!_isStreaming && !_isStartingStream && _status == ConnectionStatus.connected) {
               await Future.delayed(const Duration(milliseconds: 200));
-              if (mounted && !_isStreaming) _toggleStream();
+              if (mounted && !_isStreaming && !_isStartingStream) _toggleStream();
             }
             break;
         }
       }
     });
+  }
+
+  Future<bool> _ensureMediaPermissions() async {
+    final statuses = await [
+      Permission.camera,
+      Permission.microphone,
+    ].request();
+
+    return statuses.values.every((status) => status.isGranted);
   }
 
   void _updateStreamConfig() {
@@ -186,28 +216,76 @@ class _StreamingPageState extends State<StreamingPage> {
   }
 
   void _toggleStream() async {
-    if (_status != ConnectionStatus.connected) return;
-    if (_isStreaming) {
-      await _webRTCService.stop();
-      await NotificationService.cancelStreamingNotification();
-    } else {
-      _updateStreamConfig();
-      await _webRTCService.startStreaming();
-      await NotificationService.showStreamingNotification();
-      _signalingClient.send({
-        'type': 'device-status',
-        'deviceId': _signalingClient.deviceId,
-        'streamSettings': {
-          'resolution': _resolutions[_selectedResolutionIndex],
-          'fps': _fpsOptions[_selectedFpsIndex],
-          'bitrate': _bitrateOptions[_selectedBitrateIndex],
-          'codec': 'H.264',
-        },
-      });
+    if (_status != ConnectionStatus.connected || _isStartingStream) return;
+    try {
+      if (_isStreaming) {
+        if (mounted) {
+          setState(() {
+            _isStartingStream = true;
+          });
+        }
+        await _webRTCService.stop();
+        await NotificationService.cancelStreamingNotification();
+        await _cameraService.initialize(
+          preset: _resolutionValues[_selectedResolutionIndex],
+        );
+      } else {
+        final permissionsReady = await _ensureMediaPermissions();
+        if (!permissionsReady) {
+          if (mounted) {
+            setState(() {
+              _lastSocketError = 'Camera and microphone permissions are required to stream.';
+            });
+          }
+          return;
+        }
+
+        if (mounted) {
+          setState(() {
+            _isStartingStream = true;
+          });
+        }
+        _updateStreamConfig();
+        await _cameraService.dispose();
+        if (mounted) setState(() {});
+        await Future.delayed(const Duration(milliseconds: 300));
+        await _webRTCService.startStreaming().timeout(const Duration(seconds: 10));
+        await NotificationService.showStreamingNotification();
+        _signalingClient.send({
+          'type': 'device-status',
+          'deviceId': _signalingClient.deviceId,
+          'streamSettings': {
+            'resolution': _resolutions[_selectedResolutionIndex],
+            'fps': _fpsOptions[_selectedFpsIndex],
+            'bitrate': _bitrateOptions[_selectedBitrateIndex],
+            'codec': 'H.264',
+          },
+        });
+      }
+
+      if (mounted) {
+        setState(() {
+          _lastSocketError = null;
+          _isStartingStream = false;
+          _isStreaming = !_isStreaming;
+        });
+      }
+    } catch (e) {
+      if (!_isStreaming) {
+        try {
+          await _cameraService.initialize(
+            preset: _resolutionValues[_selectedResolutionIndex],
+          );
+        } catch (_) {}
+      }
+      if (mounted) {
+        setState(() {
+          _lastSocketError = 'Streaming failed: $e';
+          _isStartingStream = false;
+          _isStreaming = false;
+        });
+      }
     }
-    setState(() {
-      _isStreaming = !_isStreaming;
-    });
   }
 
   @override
@@ -221,7 +299,7 @@ class _StreamingPageState extends State<StreamingPage> {
 
   @override
   Widget build(BuildContext context) {
-    if (!_cameraService.isInitialized) {
+    if (_isInitializingCamera && !_isStreaming && !_isStartingStream) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
 
@@ -230,15 +308,26 @@ class _StreamingPageState extends State<StreamingPage> {
         children: [
           GestureDetector(
             onTapUp: (details) {
+              if (!_cameraService.isInitialized) return;
               final size = MediaQuery.of(context).size;
               final x = details.localPosition.dx / size.width;
               final y = details.localPosition.dy / size.height;
               _cameraService.setFocusPoint(x, y);
             },
             onDoubleTap: () {
+              if (!_cameraService.isInitialized) return;
               _cameraService.resetFocus();
             },
-            child: CameraPreview(_cameraService.controller!),
+            child: _cameraService.isInitialized
+                ? CameraPreview(_cameraService.controller!)
+                : Container(
+                    color: Colors.black,
+                    alignment: Alignment.center,
+                    child: Text(
+                      _isStartingStream ? 'Starting stream...' : 'Camera preview unavailable',
+                      style: const TextStyle(color: Colors.white70),
+                    ),
+                  ),
           ),
 
           Positioned(

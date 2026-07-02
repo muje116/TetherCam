@@ -49,6 +49,7 @@ declare global {
     disconnectDevice: (deviceId: string) => Promise<void>;
     getUsbDevices: () => Promise<UsbDevice[]>;
     enableUsbForwarding: (deviceId: string) => Promise<boolean>;
+    launchPhoneApp: (deviceId: string) => Promise<boolean>;
     getDiagnosticLogs: () => Promise<string[]>;
     sendCommand: (deviceId: string, command: string, payload?: unknown) => Promise<void>;
     startVirtualCamera: (deviceId: string, offer: string) => Promise<string>;
