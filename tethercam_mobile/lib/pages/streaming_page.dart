@@ -30,6 +30,7 @@ class _StreamingPageState extends State<StreamingPage> {
   String? _lastSocketError;
   bool _showQuickSettings = false;
   bool _isMuted = false;
+  bool _useFrontCamera = false;
   double _zoomSliderValue = 1.0;
   double _exposureOffset = 0.0;
   int? _batteryLevel;
@@ -127,18 +128,36 @@ class _StreamingPageState extends State<StreamingPage> {
 
         switch (command) {
           case 'toggle-camera':
-            await _cameraService.toggleCamera();
+            if (_isStreaming) {
+              await _webRTCService.switchCamera();
+              _useFrontCamera = !_useFrontCamera;
+            } else {
+              await _cameraService.toggleCamera();
+              _useFrontCamera = _cameraService.isFrontCamera;
+            }
             if (mounted) setState(() {});
             break;
           case 'toggle-torch':
-            await _cameraService.toggleTorch();
-            if (mounted) setState(() {});
+            if (!_isStreaming) {
+              await _cameraService.toggleTorch();
+              if (mounted) setState(() {});
+            }
             break;
           case 'toggle-camera-state':
-            await _cameraService.toggleCameraState(payloadMap['enabled'] ?? true);
+            final enabled = payloadMap['enabled'] ?? true;
+            if (_isStreaming) {
+              _webRTCService.toggleVideoMute(!enabled);
+            } else {
+              await _cameraService.toggleCameraState(enabled);
+            }
             break;
           case 'toggle-mic-state':
-            await _cameraService.toggleMicState(payloadMap['enabled'] ?? true);
+            final enabled = payloadMap['enabled'] ?? true;
+            if (_isStreaming) {
+              _webRTCService.toggleAudioMute(!enabled);
+            } else {
+              await _cameraService.toggleMicState(enabled);
+            }
             break;
           case 'set-resolution':
             final resStr = payloadMap['resolution'] as String?;
@@ -185,8 +204,22 @@ class _StreamingPageState extends State<StreamingPage> {
             });
             break;
           case 'request-stream':
-            // Desktop is requesting we start streaming immediately
-            if (!_isStreaming && !_isStartingStream && _status == ConnectionStatus.connected) {
+            // Desktop is requesting we start or re-send the stream
+            if (_status != ConnectionStatus.connected || _isStartingStream) break;
+            if (_isStreaming) {
+              await _webRTCService.stop();
+              await _webRTCService.startStreaming(useFrontCamera: _useFrontCamera);
+              _signalingClient.send({
+                'type': 'device-status',
+                'deviceId': _signalingClient.deviceId,
+                'streamSettings': {
+                  'resolution': _resolutions[_selectedResolutionIndex],
+                  'fps': _fpsOptions[_selectedFpsIndex],
+                  'bitrate': _bitrateOptions[_selectedBitrateIndex],
+                  'codec': 'H.264',
+                },
+              });
+            } else {
               await Future.delayed(const Duration(milliseconds: 200));
               if (mounted && !_isStreaming && !_isStartingStream) _toggleStream();
             }
@@ -240,6 +273,8 @@ class _StreamingPageState extends State<StreamingPage> {
           return;
         }
 
+        final bool isFront = _cameraService.isFrontCamera;
+        _useFrontCamera = isFront;
         if (mounted) {
           setState(() {
             _isStartingStream = true;
@@ -249,7 +284,7 @@ class _StreamingPageState extends State<StreamingPage> {
         await _cameraService.dispose();
         if (mounted) setState(() {});
         await Future.delayed(const Duration(milliseconds: 300));
-        await _webRTCService.startStreaming().timeout(const Duration(seconds: 10));
+        await _webRTCService.startStreaming(useFrontCamera: isFront).timeout(const Duration(seconds: 10));
         await NotificationService.showStreamingNotification();
         _signalingClient.send({
           'type': 'device-status',

@@ -48,6 +48,9 @@ class WebRTCService {
   MediaStream? _localStream;
   final SignalingClient _signalingClient;
   StreamConfig _config = const StreamConfig();
+  
+  final List<RTCIceCandidate> _pendingIceCandidates = [];
+  bool _isRemoteDescriptionSet = false;
 
   StreamConfig get config => _config;
 
@@ -71,8 +74,11 @@ class WebRTCService {
     'optional': [],
   };
 
-  Future<void> startStreaming() async {
+  Future<void> startStreaming({bool useFrontCamera = false}) async {
     await stop();
+
+    _isRemoteDescriptionSet = false;
+    _pendingIceCandidates.clear();
 
     debugPrint('[PHASE] WEBRTC START');
     _peerConnection = await createPeerConnection(_iceServers, _configConstraints);
@@ -81,14 +87,14 @@ class WebRTCService {
       'audio': true,
       'video': {
         'mandatory': {
-          'minWidth': _config.width.toString(),
-          'minHeight': _config.height.toString(),
-          'maxWidth': _config.width.toString(),
-          'maxHeight': _config.height.toString(),
-          'minFrameRate': _config.fps.toString(),
-          'maxFrameRate': _config.fps.toString(),
+          'minWidth': _config.width,
+          'minHeight': _config.height,
+          'maxWidth': _config.width,
+          'maxHeight': _config.height,
+          'minFrameRate': _config.fps,
+          'maxFrameRate': _config.fps,
         },
-        'facingMode': 'user',
+        'facingMode': useFrontCamera ? 'user' : 'environment',
         'optional': [],
       }
     };
@@ -150,18 +156,43 @@ class WebRTCService {
     await _peerConnection!.setRemoteDescription(
       RTCSessionDescription(sdp, 'answer'),
     );
+    _isRemoteDescriptionSet = true;
+    for (final candidate in _pendingIceCandidates) {
+      debugPrint('[PHASE] Applying queued remote ICE candidate');
+      await _peerConnection!.addCandidate(candidate);
+    }
+    _pendingIceCandidates.clear();
   }
 
   Future<void> handleIceCandidate(Map<String, dynamic> candidate) async {
     if (_peerConnection == null) return;
-    debugPrint('[PHASE] ICE RECV');
-    await _peerConnection!.addCandidate(
-      RTCIceCandidate(
-        candidate['candidate'],
-        candidate['sdpMid'],
-        candidate['sdpMLineIndex'],
-      ),
+    final rtcCandidate = RTCIceCandidate(
+      candidate['candidate'],
+      candidate['sdpMid'],
+      candidate['sdpMLineIndex'],
     );
+    if (!_isRemoteDescriptionSet) {
+      debugPrint('[PHASE] Queuing remote ICE candidate (SDP answer not yet set)');
+      _pendingIceCandidates.add(rtcCandidate);
+      return;
+    }
+    debugPrint('[PHASE] ICE RECV');
+    await _peerConnection!.addCandidate(rtcCandidate);
+  }
+
+  Future<void> switchCamera() async {
+    if (_localStream == null) return;
+    final videoTracks = _localStream!.getVideoTracks();
+    if (videoTracks.isNotEmpty) {
+      await Helper.switchCamera(videoTracks.first);
+    }
+  }
+
+  void toggleVideoMute(bool muted) {
+    if (_localStream == null) return;
+    for (final track in _localStream!.getVideoTracks()) {
+      track.enabled = !muted;
+    }
   }
 
   void toggleAudioMute(bool muted) {
@@ -172,6 +203,8 @@ class WebRTCService {
   }
 
   Future<void> stop() async {
+    _isRemoteDescriptionSet = false;
+    _pendingIceCandidates.clear();
     await _localStream?.dispose();
     _localStream = null;
     await _peerConnection?.close();

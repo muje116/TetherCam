@@ -7,6 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { EventEmitter } from 'node:events';
 import { ConnectionManager } from './connection-manager.js';
+import { writeDebugLog } from '../debug-log.js';
 import { getAddressCandidates as getNetworkCandidates, getPrimaryLocalAddress as resolvePrimaryAddress, getAllLocalAddresses as resolveAllAddresses } from './network-utils.js';
 
 let _dirname = '';
@@ -212,6 +213,9 @@ export class SignalingServer extends EventEmitter {
         console.log(`[SignalingServer] Received SDP offer from ${clientIp}`);
         const resolvedDeviceId = (message.deviceId as string) ?? activeDeviceId ?? undefined;
         const offerSdp = message.sdp as string;
+        // #region agent log
+        writeDebugLog({ sessionId: 'da00e2', location: 'signaling-server.ts:sdp-offer', message: 'SDP offer from mobile', data: { resolvedDeviceId, activeDeviceId, clientIp, sdpLen: offerSdp?.length ?? 0, msgDeviceId: message.deviceId }, hypothesisId: 'A' });
+        // #endregion
         if (resolvedDeviceId && offerSdp) {
           this.pendingOffers.set(resolvedDeviceId, { sdp: offerSdp, clientIp });
         }
@@ -238,9 +242,16 @@ export class SignalingServer extends EventEmitter {
       case 'device-status': {
         // Battery, temperature, stream settings updates
         const deviceId = message.deviceId as string;
+        let battery = message.battery as number | undefined;
+        if (battery != null && battery > 0 && battery <= 1) {
+          battery = Math.round(battery * 100);
+        }
+        // #region agent log
+        writeDebugLog({ sessionId: 'da00e2', location: 'signaling-server.ts:device-status', message: 'Device status update', data: { deviceId, battery, temperature: message.temperature }, hypothesisId: 'F' });
+        // #endregion
         if (deviceId) {
           this.connectionManager.updateDevice(deviceId, {
-            battery: message.battery as number,
+            battery,
             temperature: message.temperature as number,
             streamSettings: message.streamSettings as ConnectedDeviceStreamSettings,
           });
@@ -296,11 +307,13 @@ export class SignalingServer extends EventEmitter {
     return resolvePrimaryAddress();
   }
 
-  /** Returns and clears a cached SDP offer for a device (so late-mounting renderers can replay it) */
+  /** Returns a cached SDP offer without removing it (multiple renderers may need the same offer) */
   getPendingOffer(deviceId: string): { sdp: string; clientIp: string } | null {
-    const offer = this.pendingOffers.get(deviceId) ?? null;
-    if (offer) this.pendingOffers.delete(deviceId);
-    return offer;
+    return this.pendingOffers.get(deviceId) ?? null;
+  }
+
+  clearPendingOffer(deviceId: string): void {
+    this.pendingOffers.delete(deviceId);
   }
 
 }

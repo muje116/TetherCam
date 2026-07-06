@@ -1,5 +1,6 @@
 import { EventEmitter } from 'node:events';
 import { v4 as uuidv4 } from 'uuid';
+import { writeDebugLog } from '../debug-log.js';
 
 export interface ConnectedDevice {
   id: string;
@@ -99,9 +100,13 @@ export class ConnectionManager extends EventEmitter {
    */
   sendCommand(deviceId: string, command: string, payload?: unknown): boolean {
     const device = this.devices.get(deviceId);
-    if (device?.ws && device.ws.readyState === 1) {
-      device.ws.send(JSON.stringify({ type: 'command', command, payload }));
-      console.log(`[ConnectionManager] Sent command '${command}' to ${device.name}`);
+    const ok = !!(device?.ws && device.ws.readyState === 1);
+    // #region agent log
+    writeDebugLog({ sessionId: 'da00e2', location: 'connection-manager.ts:sendCommand', message: 'sendCommand invoked', data: { deviceId, command, ok, deviceFound: !!device, wsReadyState: device?.ws?.readyState ?? -1 }, hypothesisId: 'E' });
+    // #endregion
+    if (ok) {
+      device!.ws!.send(JSON.stringify({ type: 'command', command, payload }));
+      console.log(`[ConnectionManager] Sent command '${command}' to ${device!.name}`);
       return true;
     }
     return false;

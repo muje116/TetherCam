@@ -34,6 +34,8 @@ cors = __toESM(cors);
 let node_os = require("node:os");
 node_os = __toESM(node_os);
 let node_events = require("node:events");
+let node_fs = require("node:fs");
+node_fs = __toESM(node_fs);
 let uuid = require("uuid");
 let multicast_dns = require("multicast-dns");
 multicast_dns = __toESM(multicast_dns);
@@ -44,6 +46,23 @@ let ffmpeg_static = require("ffmpeg-static");
 ffmpeg_static = __toESM(ffmpeg_static);
 let node_child_process = require("node:child_process");
 let node_util = require("node:util");
+//#region electron/debug-log.ts
+var _dirname$2 = "";
+try {
+	_dirname$2 = __dirname;
+} catch {
+	_dirname$2 = node_path.default.dirname((0, node_url.fileURLToPath)({}.url));
+}
+var LOG_PATH = node_path.default.join(_dirname$2, "../../debug-da00e2.log");
+function writeDebugLog(payload) {
+	try {
+		node_fs.default.appendFileSync(LOG_PATH, `${JSON.stringify({
+			...payload,
+			timestamp: Date.now()
+		})}\n`);
+	} catch {}
+}
+//#endregion
 //#region electron/server/network-utils.ts
 function getAddressCandidates() {
 	const interfaces = node_os.default.networkInterfaces();
@@ -232,6 +251,19 @@ var SignalingServer = class extends node_events.EventEmitter {
 				console.log(`[SignalingServer] Received SDP offer from ${clientIp}`);
 				const resolvedDeviceId = message.deviceId ?? activeDeviceId ?? void 0;
 				const offerSdp = message.sdp;
+				writeDebugLog({
+					sessionId: "da00e2",
+					location: "signaling-server.ts:sdp-offer",
+					message: "SDP offer from mobile",
+					data: {
+						resolvedDeviceId,
+						activeDeviceId,
+						clientIp,
+						sdpLen: offerSdp?.length ?? 0,
+						msgDeviceId: message.deviceId
+					},
+					hypothesisId: "A"
+				});
 				if (resolvedDeviceId && offerSdp) this.pendingOffers.set(resolvedDeviceId, {
 					sdp: offerSdp,
 					clientIp
@@ -255,8 +287,21 @@ var SignalingServer = class extends node_events.EventEmitter {
 			}
 			case "device-status": {
 				const deviceId = message.deviceId;
+				let battery = message.battery;
+				if (battery != null && battery > 0 && battery <= 1) battery = Math.round(battery * 100);
+				writeDebugLog({
+					sessionId: "da00e2",
+					location: "signaling-server.ts:device-status",
+					message: "Device status update",
+					data: {
+						deviceId,
+						battery,
+						temperature: message.temperature
+					},
+					hypothesisId: "F"
+				});
 				if (deviceId) this.connectionManager.updateDevice(deviceId, {
-					battery: message.battery,
+					battery,
 					temperature: message.temperature,
 					streamSettings: message.streamSettings
 				});
@@ -301,11 +346,12 @@ var SignalingServer = class extends node_events.EventEmitter {
 	getPrimaryLocalAddress() {
 		return getPrimaryLocalAddress();
 	}
-	/** Returns and clears a cached SDP offer for a device (so late-mounting renderers can replay it) */
+	/** Returns a cached SDP offer without removing it (multiple renderers may need the same offer) */
 	getPendingOffer(deviceId) {
-		const offer = this.pendingOffers.get(deviceId) ?? null;
-		if (offer) this.pendingOffers.delete(deviceId);
-		return offer;
+		return this.pendingOffers.get(deviceId) ?? null;
+	}
+	clearPendingOffer(deviceId) {
+		this.pendingOffers.delete(deviceId);
 	}
 };
 //#endregion
@@ -372,7 +418,21 @@ var ConnectionManager = class extends node_events.EventEmitter {
 	*/
 	sendCommand(deviceId, command, payload) {
 		const device = this.devices.get(deviceId);
-		if (device?.ws && device.ws.readyState === 1) {
+		const ok = !!(device?.ws && device.ws.readyState === 1);
+		writeDebugLog({
+			sessionId: "da00e2",
+			location: "connection-manager.ts:sendCommand",
+			message: "sendCommand invoked",
+			data: {
+				deviceId,
+				command,
+				ok,
+				deviceFound: !!device,
+				wsReadyState: device?.ws?.readyState ?? -1
+			},
+			hypothesisId: "E"
+		});
+		if (ok) {
 			device.ws.send(JSON.stringify({
 				type: "command",
 				command,
@@ -976,6 +1036,12 @@ function setupIpcHandlers() {
 	});
 	electron.ipcMain.handle("get-pending-offer", (_event, deviceId) => {
 		return signalingServer?.getPendingOffer(deviceId) ?? null;
+	});
+	electron.ipcMain.handle("clear-pending-offer", (_event, deviceId) => {
+		signalingServer?.clearPendingOffer(deviceId);
+	});
+	electron.ipcMain.handle("debug-log", (_event, payload) => {
+		writeDebugLog(payload);
 	});
 	electron.ipcMain.handle("get-discovered-devices", () => {
 		return discoveryService?.getDiscoveredDevices() ?? [];

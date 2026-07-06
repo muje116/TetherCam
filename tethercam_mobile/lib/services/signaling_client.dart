@@ -137,15 +137,15 @@ class SignalingClient {
     });
   }
 
-  Future<({double level})> _getBatteryInfo() async {
-    double level = 1.0;
+  Future<({int level})> _getBatteryInfo() async {
+    int level = 100;
     if (Platform.isAndroid) {
       try {
         final result = await Process.run('dumpsys', ['battery']);
         final stdout = result.stdout as String;
         final levelMatch = RegExp(r'level:\s*(\d+)').firstMatch(stdout);
         if (levelMatch != null) {
-          level = int.parse(levelMatch.group(1)!) / 100.0;
+          level = int.parse(levelMatch.group(1)!);
         }
       } catch (_) {}
     }

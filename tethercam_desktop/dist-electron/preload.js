@@ -15,6 +15,8 @@ electron.contextBridge.exposeInMainWorld("electronAPI", {
 	captureSnapshot: (deviceId) => electron.ipcRenderer.invoke("capture-snapshot", deviceId),
 	saveSnapshot: (dataUrl) => electron.ipcRenderer.invoke("save-snapshot", dataUrl),
 	getPendingOffer: (deviceId) => electron.ipcRenderer.invoke("get-pending-offer", deviceId),
+	clearPendingOffer: (deviceId) => electron.ipcRenderer.invoke("clear-pending-offer", deviceId),
+	debugLog: (payload) => electron.ipcRenderer.invoke("debug-log", payload),
 	getDiscoveredDevices: () => electron.ipcRenderer.invoke("get-discovered-devices"),
 	scanForDevices: () => electron.ipcRenderer.invoke("scan-for-devices"),
 	invitePhone: (phoneIp) => electron.ipcRenderer.invoke("invite-phone", phoneIp),

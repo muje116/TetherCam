@@ -8,6 +8,7 @@ import { MediaPipeline } from './server/media-pipeline.js';
 import { UsbService } from './server/usb-service.js';
 import { getConnectionUrl as resolveConnectionUrl, getAllLocalAddresses } from './server/network-utils.js';
 import { invitePhoneViaWifi, probePhone } from './server/invite-client.js';
+import { writeDebugLog } from './debug-log.js';
 
 let _dirname = '';
 try {
@@ -240,6 +241,14 @@ function setupIpcHandlers() {
 
   ipcMain.handle('get-pending-offer', (_event, deviceId: string) => {
     return signalingServer?.getPendingOffer(deviceId) ?? null;
+  });
+
+  ipcMain.handle('clear-pending-offer', (_event, deviceId: string) => {
+    signalingServer?.clearPendingOffer(deviceId);
+  });
+
+  ipcMain.handle('debug-log', (_event, payload: Record<string, unknown>) => {
+    writeDebugLog(payload);
   });
 
   ipcMain.handle('get-discovered-devices', () => {

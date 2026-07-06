@@ -60,6 +60,10 @@ const electronAPI = {
   saveSnapshot: (dataUrl: string): Promise<string> => ipcRenderer.invoke('save-snapshot', dataUrl),
   getPendingOffer: (deviceId: string): Promise<{ sdp: string; clientIp: string } | null> =>
     ipcRenderer.invoke('get-pending-offer', deviceId),
+  clearPendingOffer: (deviceId: string): Promise<void> =>
+    ipcRenderer.invoke('clear-pending-offer', deviceId),
+  debugLog: (payload: Record<string, unknown>): Promise<void> =>
+    ipcRenderer.invoke('debug-log', payload),
   getDiscoveredDevices: (): Promise<DiscoveredPhone[]> => ipcRenderer.invoke('get-discovered-devices'),
   scanForDevices: (): Promise<DiscoveredPhone[]> => ipcRenderer.invoke('scan-for-devices'),
   invitePhone: (phoneIp: string): Promise<{ ok: boolean; error?: string }> =>

@@ -57,6 +57,8 @@ declare global {
     captureSnapshot: (deviceId: string) => Promise<boolean>;
     saveSnapshot: (dataUrl: string) => Promise<string>;
     getPendingOffer: (deviceId: string) => Promise<{ sdp: string; clientIp: string } | null>;
+    clearPendingOffer: (deviceId: string) => Promise<void>;
+    debugLog: (payload: Record<string, unknown>) => Promise<void>;
     getDiscoveredDevices: () => Promise<DiscoveredPhone[]>;
     scanForDevices: () => Promise<DiscoveredPhone[]>;
     invitePhone: (phoneIp: string) => Promise<{ ok: boolean; error?: string }>;
