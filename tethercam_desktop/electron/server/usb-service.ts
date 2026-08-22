@@ -70,7 +70,7 @@ export class UsbService extends EventEmitter {
       await execAsync(`adb -s ${deviceId} shell monkey -p com.tethercam.mobile -c android.intent.category.LAUNCHER 1`);
       console.log(`[UsbService] Launched TetherCam on ${deviceId}`);
       return true;
-    } catch (err) {
+    } catch {
       try {
         await execAsync(`adb -s ${deviceId} shell am start -n com.tethercam.mobile/.MainActivity`);
         console.log(`[UsbService] Launched TetherCam on ${deviceId} (alt)`);

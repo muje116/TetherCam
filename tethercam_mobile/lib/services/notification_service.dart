@@ -1,7 +1,8 @@
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
 class NotificationService {
-  static final FlutterLocalNotificationsPlugin _plugin = FlutterLocalNotificationsPlugin();
+  static final FlutterLocalNotificationsPlugin _plugin =
+      FlutterLocalNotificationsPlugin();
   static bool _initialized = false;
   static const int _streamingNotificationId = 4747;
   static const String _channelId = 'tethercam_streaming';
@@ -9,13 +10,18 @@ class NotificationService {
 
   static Future<void> initialize() async {
     if (_initialized) return;
-    const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
+    const androidSettings = AndroidInitializationSettings(
+      '@mipmap/ic_launcher',
+    );
     const iosSettings = DarwinInitializationSettings(
       requestAlertPermission: false,
       requestBadgePermission: false,
       requestSoundPermission: false,
     );
-    const settings = InitializationSettings(android: androidSettings, iOS: iosSettings);
+    const settings = InitializationSettings(
+      android: androidSettings,
+      iOS: iosSettings,
+    );
     await _plugin.initialize(settings);
     _initialized = true;
 
@@ -27,7 +33,10 @@ class NotificationService {
       playSound: false,
       enableVibration: false,
     );
-    await _plugin.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
+    await _plugin
+        .resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin
+        >()
         ?.createNotificationChannel(androidChannel);
   }
 
@@ -48,7 +57,10 @@ class NotificationService {
       presentBadge: false,
       presentSound: false,
     );
-    const details = NotificationDetails(android: androidDetails, iOS: iosDetails);
+    const details = NotificationDetails(
+      android: androidDetails,
+      iOS: iosDetails,
+    );
     await _plugin.show(
       _streamingNotificationId,
       'TetherCam Streaming',

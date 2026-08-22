@@ -6,14 +6,13 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { EventEmitter } from 'node:events';
-import { ConnectionManager } from './connection-manager.js';
-import { writeDebugLog } from '../debug-log.js';
-import { getAddressCandidates as getNetworkCandidates, getPrimaryLocalAddress as resolvePrimaryAddress, getAllLocalAddresses as resolveAllAddresses } from './network-utils.js';
+import { ConnectionManager, ConnectedDevice } from './connection-manager.js';
+import { getPrimaryLocalAddress as resolvePrimaryAddress, getAllLocalAddresses as resolveAllAddresses } from './network-utils.js';
 
 let _dirname = '';
 try {
   _dirname = __dirname;
-} catch (e) {
+  } catch {
   _dirname = path.dirname(fileURLToPath(import.meta.url));
 }
 
@@ -72,6 +71,10 @@ export class SignalingServer extends EventEmitter {
     this.app.post('/api/devices/:deviceId/command', (req, res) => {
       const { deviceId } = req.params;
       const { command, payload } = req.body;
+      if (typeof command !== 'string' || command.trim().length === 0) {
+        res.status(400).json({ error: 'command must be a non-empty string' });
+        return;
+      }
       const success = this.connectionManager.sendCommand(deviceId, command, payload);
       if (success) {
         res.json({ status: 'ok' });
@@ -141,6 +144,7 @@ export class SignalingServer extends EventEmitter {
 
       ws.on('close', () => {
         if (deviceId) {
+          this.pendingOffers.delete(deviceId);
           this.connectionManager.removeDevice(deviceId);
         }
         console.log(`[SignalingServer] WebSocket disconnected: ${clientIp}`);
@@ -213,9 +217,6 @@ export class SignalingServer extends EventEmitter {
         console.log(`[SignalingServer] Received SDP offer from ${clientIp}`);
         const resolvedDeviceId = (message.deviceId as string) ?? activeDeviceId ?? undefined;
         const offerSdp = message.sdp as string;
-        // #region agent log
-        writeDebugLog({ sessionId: 'da00e2', location: 'signaling-server.ts:sdp-offer', message: 'SDP offer from mobile', data: { resolvedDeviceId, activeDeviceId, clientIp, sdpLen: offerSdp?.length ?? 0, msgDeviceId: message.deviceId }, hypothesisId: 'A' });
-        // #endregion
         if (resolvedDeviceId && offerSdp) {
           this.pendingOffers.set(resolvedDeviceId, { sdp: offerSdp, clientIp });
         }
@@ -246,15 +247,18 @@ export class SignalingServer extends EventEmitter {
         if (battery != null && battery > 0 && battery <= 1) {
           battery = Math.round(battery * 100);
         }
-        // #region agent log
-        writeDebugLog({ sessionId: 'da00e2', location: 'signaling-server.ts:device-status', message: 'Device status update', data: { deviceId, battery, temperature: message.temperature }, hypothesisId: 'F' });
-        // #endregion
         if (deviceId) {
-          this.connectionManager.updateDevice(deviceId, {
-            battery,
-            temperature: message.temperature as number,
-            streamSettings: message.streamSettings as ConnectedDeviceStreamSettings,
-          });
+          const updates: Partial<ConnectedDevice> = {};
+          if (typeof battery === 'number' && Number.isFinite(battery)) {
+            updates.battery = Math.max(0, Math.min(100, Math.round(battery)));
+          }
+          if (typeof message.temperature === 'number' && Number.isFinite(message.temperature)) {
+            updates.temperature = message.temperature;
+          }
+          if (this.isStreamSettings(message.streamSettings)) {
+            updates.streamSettings = message.streamSettings;
+          }
+          if (Object.keys(updates).length > 0) this.connectionManager.updateDevice(deviceId, updates);
         }
         break;
       }
@@ -314,6 +318,15 @@ export class SignalingServer extends EventEmitter {
 
   clearPendingOffer(deviceId: string): void {
     this.pendingOffers.delete(deviceId);
+  }
+
+  private isStreamSettings(value: unknown): value is ConnectedDeviceStreamSettings {
+    if (typeof value !== 'object' || value === null) return false;
+    const settings = value as Record<string, unknown>;
+    return typeof settings.resolution === 'string'
+      && typeof settings.fps === 'number'
+      && typeof settings.bitrate === 'number'
+      && typeof settings.codec === 'string';
   }
 
 }

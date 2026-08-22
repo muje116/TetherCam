@@ -8,16 +8,20 @@ if (ffmpegPath) {
   ffmpeg.setFfmpegPath(ffmpegPath);
 }
 
+type FfmpegCommand = ReturnType<typeof ffmpeg>;
+type FfmpegInput = Parameters<FfmpegCommand['input']>[0];
+
 export class MediaPipeline extends EventEmitter {
   private pc: RTCPeerConnection | null = null;
-  private ffmpegProcess: any = null;
-  private rtspServer: any = null;
+  private ffmpegProcess: FfmpegCommand | null = null;
+  private audioFfmpegProcess: FfmpegCommand | null = null;
 
   constructor() {
     super();
   }
 
   async createPeerConnection(offer: string): Promise<string> {
+    this.stop();
     this.pc = new RTCPeerConnection({
       codecs: {
         video: [
@@ -45,6 +49,8 @@ export class MediaPipeline extends EventEmitter {
     this.pc.onTrack.subscribe((track: MediaStreamTrack) => {
       if (track.kind === 'video') {
         this.startFfmpegPipeline(track);
+      } else if (track.kind === 'audio') {
+        this.startAudioPipeline(track);
       }
     });
 
@@ -69,11 +75,13 @@ export class MediaPipeline extends EventEmitter {
     }
   }
 
-  private startFfmpegPipeline(track: any) {
+  private startFfmpegPipeline(track: MediaStreamTrack) {
     console.log('[MediaPipeline] Starting FFmpeg pipeline to Virtual Camera + RTSP');
 
+    this.ffmpegProcess?.kill();
+
     this.ffmpegProcess = ffmpeg()
-      .input(track)
+      .input(track as unknown as FfmpegInput)
       .inputFormat('rtp');
 
     const platform = os.platform();
@@ -139,10 +147,11 @@ export class MediaPipeline extends EventEmitter {
     return answer.sdp!;
   }
 
-  private startAudioPipeline(track: any) {
+  private startAudioPipeline(track: MediaStreamTrack) {
     const platform = os.platform();
+    this.audioFfmpegProcess?.kill();
     const audioFfmpeg = ffmpeg()
-      .input(track)
+      .input(track as unknown as FfmpegInput)
       .inputFormat('rtp');
 
     if (platform === 'win32') {
@@ -165,11 +174,16 @@ export class MediaPipeline extends EventEmitter {
     audioFfmpeg
       .on('start', () => console.log('[FFmpeg Audio] Started virtual microphone'))
       .on('error', (err: Error) => console.error('[FFmpeg Audio] Error:', err.message))
-      .run();
+    this.audioFfmpegProcess = audioFfmpeg;
+    this.audioFfmpegProcess.run();
   }
 
   stop() {
     this.ffmpegProcess?.kill();
+    this.audioFfmpegProcess?.kill();
     this.pc?.close();
+    this.ffmpegProcess = null;
+    this.audioFfmpegProcess = null;
+    this.pc = null;
   }
 }

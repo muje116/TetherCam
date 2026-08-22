@@ -1,5 +1,8 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
+import 'package:flutter_webrtc/flutter_webrtc.dart';
 import '../services/camera_service.dart';
 import '../services/signaling_client.dart';
 import '../services/webrtc_service.dart';
@@ -18,10 +21,14 @@ class StreamingPage extends StatefulWidget {
 }
 
 class _StreamingPageState extends State<StreamingPage> {
-  static const bool _autoStartStream = bool.fromEnvironment('TC_AUTO_START_STREAM', defaultValue: false);
+  static const bool _autoStartStream = bool.fromEnvironment(
+    'TC_AUTO_START_STREAM',
+    defaultValue: false,
+  );
   final CameraService _cameraService = CameraService();
   final SignalingClient _signalingClient = SignalingClient();
   late WebRTCService _webRTCService;
+  final RTCVideoRenderer _localRenderer = RTCVideoRenderer();
 
   bool _isStreaming = false;
   bool _isStartingStream = false;
@@ -35,6 +42,10 @@ class _StreamingPageState extends State<StreamingPage> {
   double _exposureOffset = 0.0;
   int? _batteryLevel;
   final Battery _battery = Battery();
+  StreamSubscription<BatteryState>? _batterySubscription;
+  StreamSubscription<ConnectionStatus>? _statusSubscription;
+  StreamSubscription<String>? _errorSubscription;
+  StreamSubscription<Map<String, dynamic>>? _messageSubscription;
   int _selectedResolutionIndex = 2;
   int _selectedFpsIndex = 1;
   int _selectedBitrateIndex = 2;
@@ -56,55 +67,73 @@ class _StreamingPageState extends State<StreamingPage> {
   ];
   static const _fpsOptions = [15, 24, 30, 60];
   static const _bitrateOptions = [1000, 2500, 4000, 8000, 16000];
-  static const _bitrateLabels = ['1 Mbps', '2.5 Mbps', '4 Mbps', '8 Mbps', '16 Mbps'];
+  static const _bitrateLabels = [
+    '1 Mbps',
+    '2.5 Mbps',
+    '4 Mbps',
+    '8 Mbps',
+    '16 Mbps',
+  ];
   @override
   void initState() {
     super.initState();
     _webRTCService = WebRTCService(_signalingClient);
+    _webRTCService.onLocalStream = (stream) {
+      _localRenderer.srcObject = stream;
+      if (mounted) setState(() {});
+    };
     _initialize();
     _initBattery();
     WakelockPlus.enable();
   }
 
   Future<void> _initBattery() async {
-    final level = await _battery.batteryLevel;
-    if (mounted) setState(() => _batteryLevel = level);
-    _battery.onBatteryStateChanged.listen((BatteryState state) async {
-      final newLevel = await _battery.batteryLevel;
-      if (mounted) setState(() => _batteryLevel = newLevel);
-    });
+    try {
+      final level = await _battery.batteryLevel;
+      if (mounted) setState(() => _batteryLevel = level);
+      _batterySubscription = _battery.onBatteryStateChanged.listen((_) async {
+        final newLevel = await _battery.batteryLevel;
+        if (mounted) setState(() => _batteryLevel = newLevel);
+      });
+    } catch (_) {
+      // Battery information is optional; streaming should still work.
+    }
   }
 
   Future<void> _initialize() async {
-    final permissionsReady = await _ensureMediaPermissions();
-    if (!permissionsReady) {
-      if (mounted) {
-        setState(() {
-          _lastSocketError = 'Camera and microphone permissions are required to stream.';
-        });
-      }
-      return;
-    }
-
+    var permissionsReady = false;
     try {
+      await _localRenderer.initialize();
+      permissionsReady = await _ensureMediaPermissions();
+      if (!permissionsReady) {
+        throw StateError(
+          'Camera and microphone permissions are required to stream.',
+        );
+      }
       await _cameraService.initialize();
-    } finally {
+    } catch (error) {
       if (mounted) {
-        setState(() {
-          _isInitializingCamera = false;
-        });
+        setState(
+          () => _lastSocketError = error.toString().replaceFirst(
+            'Bad state: ',
+            '',
+          ),
+        );
       }
     }
-    if (mounted) setState(() {});
+    if (mounted) {
+      setState(() => _isInitializingCamera = false);
+    }
+    if (!permissionsReady || !mounted) return;
 
-    _signalingClient.statusStream.listen((status) {
+    _statusSubscription = _signalingClient.statusStream.listen((status) {
       if (mounted) {
         setState(() {
           _status = status;
         });
       }
     });
-    _signalingClient.errorStream.listen((error) {
+    _errorSubscription = _signalingClient.errorStream.listen((error) {
       if (mounted) {
         setState(() {
           _lastSocketError = error;
@@ -112,19 +141,15 @@ class _StreamingPageState extends State<StreamingPage> {
       }
     });
 
-    await _signalingClient.connect(widget.desktop.ip, widget.desktop.port);
-    if (_autoStartStream) {
-      await Future.delayed(const Duration(milliseconds: 800));
-      if (mounted && _status == ConnectionStatus.connected && !_isStreaming) {
-        _toggleStream();
-      }
-    }
-
-    _signalingClient.messageStream.listen((message) async {
+    _messageSubscription = _signalingClient.messageStream.listen((
+      message,
+    ) async {
       if (message['type'] == 'command') {
         final command = message['command'] as String?;
         final payload = message['payload'];
-        final payloadMap = payload is Map<String, dynamic> ? payload : <String, dynamic>{};
+        final payloadMap = payload is Map<String, dynamic>
+            ? payload
+            : <String, dynamic>{};
 
         switch (command) {
           case 'toggle-camera':
@@ -138,13 +163,18 @@ class _StreamingPageState extends State<StreamingPage> {
             if (mounted) setState(() {});
             break;
           case 'toggle-torch':
-            if (!_isStreaming) {
+            if (_isStreaming) {
+              final torchState = await _webRTCService.toggleTorch();
+              if (torchState != null && mounted) setState(() {});
+            } else {
               await _cameraService.toggleTorch();
               if (mounted) setState(() {});
             }
             break;
           case 'toggle-camera-state':
-            final enabled = payloadMap['enabled'] ?? true;
+            final enabled = payloadMap['enabled'] is bool
+                ? payloadMap['enabled'] as bool
+                : true;
             if (_isStreaming) {
               _webRTCService.toggleVideoMute(!enabled);
             } else {
@@ -152,7 +182,9 @@ class _StreamingPageState extends State<StreamingPage> {
             }
             break;
           case 'toggle-mic-state':
-            final enabled = payloadMap['enabled'] ?? true;
+            final enabled = payloadMap['enabled'] is bool
+                ? payloadMap['enabled'] as bool
+                : true;
             if (_isStreaming) {
               _webRTCService.toggleAudioMute(!enabled);
             } else {
@@ -164,8 +196,7 @@ class _StreamingPageState extends State<StreamingPage> {
             if (resStr != null) {
               final idx = _resolutions.indexOf(resStr);
               if (idx >= 0) {
-                await _cameraService.setResolutionPreset(_resolutionValues[idx]);
-                _updateStreamConfig();
+                await _selectResolution(idx);
               }
             }
             break;
@@ -174,20 +205,20 @@ class _StreamingPageState extends State<StreamingPage> {
             if (fps != null) {
               final idx = _fpsOptions.indexOf(fps);
               if (idx >= 0) {
-                setState(() => _selectedFpsIndex = idx);
-                _updateStreamConfig();
+                await _selectFps(idx);
               }
             }
             break;
           case 'set-bitrate':
             final bitrate = payloadMap['bitrate'] as int?;
             if (bitrate != null && _bitrateOptions.contains(bitrate)) {
-              setState(() => _selectedBitrateIndex = _bitrateOptions.indexOf(bitrate));
-              _updateStreamConfig();
+              await _selectBitrate(_bitrateOptions.indexOf(bitrate));
             }
             break;
           case 'sdp-answer':
-            final sdp = payload is String ? payload : (payloadMap['sdp'] as String? ?? '');
+            final sdp = payload is String
+                ? payload
+                : (payloadMap['sdp'] as String? ?? '');
             if (sdp.isNotEmpty) {
               await _webRTCService.handleAnswer(sdp);
             }
@@ -198,76 +229,151 @@ class _StreamingPageState extends State<StreamingPage> {
             }
             break;
           case 'stream-stats':
-            setState(() {
-              _latencyMs = '${payloadMap['latencyMs'] ?? '--'} ms';
-              _streamFps = '${payloadMap['fps'] ?? '--'}';
-            });
+            if (mounted) {
+              setState(() {
+                _latencyMs = '${payloadMap['latencyMs'] ?? '--'} ms';
+                _streamFps = '${payloadMap['fps'] ?? '--'}';
+              });
+            }
             break;
           case 'request-stream':
             // Desktop is requesting we start or re-send the stream
-            if (_status != ConnectionStatus.connected || _isStartingStream) break;
+            if (_status != ConnectionStatus.connected || _isStartingStream) {
+              break;
+            }
             if (_isStreaming) {
-              await _webRTCService.stop();
-              await _webRTCService.startStreaming(useFrontCamera: _useFrontCamera);
-              _signalingClient.send({
-                'type': 'device-status',
-                'deviceId': _signalingClient.deviceId,
-                'streamSettings': {
-                  'resolution': _resolutions[_selectedResolutionIndex],
-                  'fps': _fpsOptions[_selectedFpsIndex],
-                  'bitrate': _bitrateOptions[_selectedBitrateIndex],
-                  'codec': 'H.264',
-                },
-              });
+              await _restartStreaming();
             } else {
               await Future.delayed(const Duration(milliseconds: 200));
-              if (mounted && !_isStreaming && !_isStartingStream) _toggleStream();
+              if (mounted && !_isStreaming && !_isStartingStream) {
+                unawaited(_toggleStream());
+              }
             }
             break;
         }
       }
     });
+
+    await _signalingClient.connect(widget.desktop.ip, widget.desktop.port);
+    if (_autoStartStream) {
+      await Future.delayed(const Duration(milliseconds: 800));
+      if (mounted && _status == ConnectionStatus.connected && !_isStreaming) {
+        unawaited(_toggleStream());
+      }
+    }
   }
 
   Future<bool> _ensureMediaPermissions() async {
-    final statuses = await [
-      Permission.camera,
-      Permission.microphone,
-    ].request();
+    final statuses = await [Permission.camera, Permission.microphone].request();
 
     return statuses.values.every((status) => status.isGranted);
   }
 
+  Map<String, dynamic> _streamSettings() => {
+    'resolution': _resolutions[_selectedResolutionIndex],
+    'fps': _fpsOptions[_selectedFpsIndex],
+    'bitrate': _bitrateOptions[_selectedBitrateIndex],
+    'codec': 'H.264',
+  };
+
   void _updateStreamConfig() {
     final res = _resSizes[_selectedResolutionIndex];
-    _webRTCService.updateConfig(StreamConfig(
+    final config = StreamConfig(
       width: res.width,
       height: res.height,
       fps: _fpsOptions[_selectedFpsIndex],
       bitrate: _bitrateOptions[_selectedBitrateIndex],
-    ));
+    );
+    _webRTCService.updateConfig(config);
+    _signalingClient.updateStreamSettings(_streamSettings());
   }
 
-  void _toggleStream() async {
-    if (_status != ConnectionStatus.connected || _isStartingStream) return;
+  void _sendDeviceStatus() {
+    _signalingClient.send({
+      'type': 'device-status',
+      'deviceId': _signalingClient.deviceId,
+      'streamSettings': _streamSettings(),
+    });
+  }
+
+  Future<void> _selectResolution(int index) async {
+    if (index < 0 || index >= _resolutions.length) return;
+    if (mounted) setState(() => _selectedResolutionIndex = index);
+    _updateStreamConfig();
+    if (!_isStreaming && _cameraService.isInitialized) {
+      await _cameraService.setResolutionPreset(_resolutionValues[index]);
+      if (mounted) setState(() {});
+    } else if (_isStreaming) {
+      await _restartStreaming();
+    }
+  }
+
+  Future<void> _selectFps(int index) async {
+    if (index < 0 || index >= _fpsOptions.length) return;
+    if (mounted) setState(() => _selectedFpsIndex = index);
+    _updateStreamConfig();
+    if (_isStreaming) await _restartStreaming();
+  }
+
+  Future<void> _selectBitrate(int index) async {
+    if (index < 0 || index >= _bitrateOptions.length) return;
+    if (mounted) setState(() => _selectedBitrateIndex = index);
+    _updateStreamConfig();
+    if (_isStreaming) await _restartStreaming();
+  }
+
+  Future<void> _restartStreaming() async {
+    if (!_isStreaming || _isStartingStream) return;
+    if (mounted) setState(() => _isStartingStream = true);
     try {
-      if (_isStreaming) {
-        if (mounted) {
-          setState(() {
-            _isStartingStream = true;
-          });
-        }
+      _updateStreamConfig();
+      await _webRTCService
+          .startStreaming(useFrontCamera: _useFrontCamera)
+          .timeout(const Duration(seconds: 10));
+      _sendDeviceStatus();
+      if (mounted) {
+        setState(() {
+          _lastSocketError = null;
+          _isStartingStream = false;
+        });
+      }
+    } catch (error) {
+      if (mounted) {
+        setState(() {
+          _lastSocketError = 'Stream restart failed: $error';
+          _isStartingStream = false;
+          _isStreaming = false;
+        });
+      }
+      try {
+        await _cameraService.initialize(
+          preset: _resolutionValues[_selectedResolutionIndex],
+        );
+      } catch (_) {}
+    }
+  }
+
+  Future<void> _toggleStream() async {
+    if (_status != ConnectionStatus.connected || _isStartingStream) return;
+    final wasStreaming = _isStreaming;
+    if (mounted) setState(() => _isStartingStream = true);
+
+    try {
+      if (wasStreaming) {
         await _webRTCService.stop();
         await NotificationService.cancelStreamingNotification();
         await _cameraService.initialize(
           preset: _resolutionValues[_selectedResolutionIndex],
         );
+        if (mounted) setState(() => _isStreaming = false);
       } else {
         final permissionsReady = await _ensureMediaPermissions();
         if (!permissionsReady) {
           if (mounted) {
             setState(() {
-              _lastSocketError = 'Camera and microphone permissions are required to stream.';
+              _lastSocketError =
+                  'Camera and microphone permissions are required to stream.';
+              _isStartingStream = false;
             });
           }
           return;
@@ -275,38 +381,25 @@ class _StreamingPageState extends State<StreamingPage> {
 
         final bool isFront = _cameraService.isFrontCamera;
         _useFrontCamera = isFront;
-        if (mounted) {
-          setState(() {
-            _isStartingStream = true;
-          });
-        }
         _updateStreamConfig();
         await _cameraService.dispose();
         if (mounted) setState(() {});
         await Future.delayed(const Duration(milliseconds: 300));
-        await _webRTCService.startStreaming(useFrontCamera: isFront).timeout(const Duration(seconds: 10));
+        await _webRTCService
+            .startStreaming(useFrontCamera: isFront)
+            .timeout(const Duration(seconds: 10));
         await NotificationService.showStreamingNotification();
-        _signalingClient.send({
-          'type': 'device-status',
-          'deviceId': _signalingClient.deviceId,
-          'streamSettings': {
-            'resolution': _resolutions[_selectedResolutionIndex],
-            'fps': _fpsOptions[_selectedFpsIndex],
-            'bitrate': _bitrateOptions[_selectedBitrateIndex],
-            'codec': 'H.264',
-          },
-        });
+        _sendDeviceStatus();
+        if (mounted) setState(() => _isStreaming = true);
       }
-
       if (mounted) {
         setState(() {
           _lastSocketError = null;
           _isStartingStream = false;
-          _isStreaming = !_isStreaming;
         });
       }
-    } catch (e) {
-      if (!_isStreaming) {
+    } catch (error) {
+      if (!wasStreaming) {
         try {
           await _cameraService.initialize(
             preset: _resolutionValues[_selectedResolutionIndex],
@@ -315,7 +408,7 @@ class _StreamingPageState extends State<StreamingPage> {
       }
       if (mounted) {
         setState(() {
-          _lastSocketError = 'Streaming failed: $e';
+          _lastSocketError = 'Streaming failed: $error';
           _isStartingStream = false;
           _isStreaming = false;
         });
@@ -325,10 +418,16 @@ class _StreamingPageState extends State<StreamingPage> {
 
   @override
   void dispose() {
-    _cameraService.dispose();
-    _signalingClient.disconnect();
-    _webRTCService.stop();
-    WakelockPlus.disable();
+    _webRTCService.onLocalStream = null;
+    _batterySubscription?.cancel();
+    _statusSubscription?.cancel();
+    _errorSubscription?.cancel();
+    _messageSubscription?.cancel();
+    unawaited(_cameraService.dispose());
+    _signalingClient.dispose();
+    unawaited(_webRTCService.stop());
+    unawaited(_localRenderer.dispose());
+    unawaited(WakelockPlus.disable());
     super.dispose();
   }
 
@@ -353,13 +452,21 @@ class _StreamingPageState extends State<StreamingPage> {
               if (!_cameraService.isInitialized) return;
               _cameraService.resetFocus();
             },
-            child: _cameraService.isInitialized
+            child: _isStreaming && _localRenderer.srcObject != null
+                ? RTCVideoView(
+                    _localRenderer,
+                    mirror: _useFrontCamera,
+                    objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
+                  )
+                : _cameraService.isInitialized
                 ? CameraPreview(_cameraService.controller!)
                 : Container(
                     color: Colors.black,
                     alignment: Alignment.center,
                     child: Text(
-                      _isStartingStream ? 'Starting stream...' : 'Camera preview unavailable',
+                      _isStartingStream
+                          ? 'Starting stream...'
+                          : 'Camera preview unavailable',
                       style: const TextStyle(color: Colors.white70),
                     ),
                   ),
@@ -376,7 +483,10 @@ class _StreamingPageState extends State<StreamingPage> {
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 6,
+                      ),
                       decoration: BoxDecoration(
                         color: Colors.black54,
                         borderRadius: BorderRadius.circular(20),
@@ -386,7 +496,9 @@ class _StreamingPageState extends State<StreamingPage> {
                           Icon(
                             Icons.circle,
                             size: 12,
-                            color: _status == ConnectionStatus.connected ? Colors.green : Colors.red,
+                            color: _status == ConnectionStatus.connected
+                                ? Colors.green
+                                : Colors.red,
                           ),
                           const SizedBox(width: 8),
                           Text('Status: ${_status.name}'),
@@ -397,7 +509,10 @@ class _StreamingPageState extends State<StreamingPage> {
                       children: [
                         if (_batteryLevel != null)
                           Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 4,
+                            ),
                             margin: const EdgeInsets.only(right: 8),
                             decoration: BoxDecoration(
                               color: Colors.black54,
@@ -405,30 +520,51 @@ class _StreamingPageState extends State<StreamingPage> {
                             ),
                             child: Row(
                               children: [
-                                Icon(Icons.battery_full, size: 14, color: _batteryLevel! > 20 ? Colors.green : Colors.red),
+                                Icon(
+                                  Icons.battery_full,
+                                  size: 14,
+                                  color: _batteryLevel! > 20
+                                      ? Colors.green
+                                      : Colors.red,
+                                ),
                                 const SizedBox(width: 4),
-                                Text('$_batteryLevel%', style: const TextStyle(fontSize: 12)),
+                                Text(
+                                  '$_batteryLevel%',
+                                  style: const TextStyle(fontSize: 12),
+                                ),
                               ],
                             ),
                           ),
                         if (_isStreaming && _streamFps != null)
                           Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 4,
+                            ),
                             decoration: BoxDecoration(
                               color: Colors.black54,
                               borderRadius: BorderRadius.circular(12),
                             ),
-                            child: Text('$_streamFps FPS', style: const TextStyle(fontSize: 12)),
+                            child: Text(
+                              '$_streamFps FPS',
+                              style: const TextStyle(fontSize: 12),
+                            ),
                           ),
                         const SizedBox(width: 8),
                         if (_isStreaming && _latencyMs != null)
                           Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 4,
+                            ),
                             decoration: BoxDecoration(
                               color: Colors.black54,
                               borderRadius: BorderRadius.circular(12),
                             ),
-                            child: Text('$_latencyMs', style: const TextStyle(fontSize: 12)),
+                            child: Text(
+                              '$_latencyMs',
+                              style: const TextStyle(fontSize: 12),
+                            ),
                           ),
                         const SizedBox(width: 8),
                         IconButton(
@@ -442,7 +578,10 @@ class _StreamingPageState extends State<StreamingPage> {
                 if (_lastSocketError != null && _lastSocketError!.isNotEmpty)
                   Container(
                     margin: const EdgeInsets.only(top: 8),
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 8,
+                    ),
                     decoration: BoxDecoration(
                       color: Colors.red.withValues(alpha: 0.7),
                       borderRadius: BorderRadius.circular(8),
@@ -471,7 +610,9 @@ class _StreamingPageState extends State<StreamingPage> {
                     value: _zoomSliderValue,
                     min: 1.0,
                     max: _cameraService.maxZoom,
-                    divisions: ((_cameraService.maxZoom - 1.0) * 10).round().clamp(1, 100),
+                    divisions: ((_cameraService.maxZoom - 1.0) * 10)
+                        .round()
+                        .clamp(1, 100),
                     label: '${_zoomSliderValue.toStringAsFixed(1)}x',
                     onChanged: (v) {
                       setState(() => _zoomSliderValue = v);
@@ -482,7 +623,8 @@ class _StreamingPageState extends State<StreamingPage> {
               ),
             ),
 
-          if (_cameraService.minExposureOffset != _cameraService.maxExposureOffset)
+          if (_cameraService.minExposureOffset !=
+              _cameraService.maxExposureOffset)
             Positioned(
               right: 20,
               top: 0,
@@ -517,7 +659,9 @@ class _StreamingPageState extends State<StreamingPage> {
                   children: [
                     _ControlButton(
                       icon: Icons.tune,
-                      onPressed: () => setState(() => _showQuickSettings = !_showQuickSettings),
+                      onPressed: () => setState(
+                        () => _showQuickSettings = !_showQuickSettings,
+                      ),
                     ),
                   ],
                 ),
@@ -528,8 +672,14 @@ class _StreamingPageState extends State<StreamingPage> {
                     _ControlButton(
                       icon: Icons.flip_camera_android,
                       onPressed: () async {
-                        await _cameraService.toggleCamera();
-                        setState(() {});
+                        if (_isStreaming) {
+                          await _webRTCService.switchCamera();
+                          _useFrontCamera = !_useFrontCamera;
+                        } else {
+                          await _cameraService.toggleCamera();
+                          _useFrontCamera = _cameraService.isFrontCamera;
+                        }
+                        if (mounted) setState(() {});
                       },
                     ),
                     GestureDetector(
@@ -550,10 +700,18 @@ class _StreamingPageState extends State<StreamingPage> {
                       ),
                     ),
                     _ControlButton(
-                      icon: _cameraService.torchEnabled ? Icons.flash_on : Icons.flash_off,
+                      icon:
+                          _cameraService.torchEnabled ||
+                              _webRTCService.torchEnabled
+                          ? Icons.flash_on
+                          : Icons.flash_off,
                       onPressed: () async {
-                        await _cameraService.toggleTorch();
-                        setState(() {});
+                        if (_isStreaming) {
+                          await _webRTCService.toggleTorch();
+                        } else {
+                          await _cameraService.toggleTorch();
+                        }
+                        if (mounted) setState(() {});
                       },
                     ),
                     _ControlButton(
@@ -592,7 +750,10 @@ class _StreamingPageState extends State<StreamingPage> {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                const Text('Quick Settings', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                const Text(
+                  'Quick Settings',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                ),
                 IconButton(
                   icon: const Icon(Icons.close, size: 20),
                   onPressed: () => setState(() => _showQuickSettings = false),
@@ -600,18 +761,26 @@ class _StreamingPageState extends State<StreamingPage> {
               ],
             ),
             const SizedBox(height: 8),
-            _buildSettingRow('Resolution', _resolutions, _selectedResolutionIndex, (i) {
-              setState(() => _selectedResolutionIndex = i);
-              _cameraService.setResolutionPreset(_resolutionValues[i]);
-              _updateStreamConfig();
-            }),
-            _buildSettingRow('FPS', _fpsOptions.map((f) => '$f').toList(), _selectedFpsIndex, (i) {
-              setState(() => _selectedFpsIndex = i);
-              _updateStreamConfig();
-            }),
-            _buildSettingRow('Bitrate', _bitrateLabels, _selectedBitrateIndex, (i) {
-              setState(() => _selectedBitrateIndex = i);
-              _updateStreamConfig();
+            _buildSettingRow(
+              'Resolution',
+              _resolutions,
+              _selectedResolutionIndex,
+              (i) {
+                unawaited(_selectResolution(i));
+              },
+            ),
+            _buildSettingRow(
+              'FPS',
+              _fpsOptions.map((f) => '$f').toList(),
+              _selectedFpsIndex,
+              (i) {
+                unawaited(_selectFps(i));
+              },
+            ),
+            _buildSettingRow('Bitrate', _bitrateLabels, _selectedBitrateIndex, (
+              i,
+            ) {
+              unawaited(_selectBitrate(i));
             }),
           ],
         ),
@@ -619,7 +788,12 @@ class _StreamingPageState extends State<StreamingPage> {
     );
   }
 
-  Widget _buildSettingRow(String label, List<String> options, int selected, ValueChanged<int> onChanged) {
+  Widget _buildSettingRow(
+    String label,
+    List<String> options,
+    int selected,
+    ValueChanged<int> onChanged,
+  ) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(
@@ -639,15 +813,25 @@ class _StreamingPageState extends State<StreamingPage> {
                     child: GestureDetector(
                       onTap: () => onChanged(i),
                       child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 4,
+                        ),
                         decoration: BoxDecoration(
                           color: isSelected ? Colors.indigo : Colors.white12,
                           borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: isSelected ? Colors.indigoAccent : Colors.white24),
+                          border: Border.all(
+                            color: isSelected
+                                ? Colors.indigoAccent
+                                : Colors.white24,
+                          ),
                         ),
                         child: Text(
                           options[i],
-                          style: TextStyle(fontSize: 12, color: isSelected ? Colors.white : Colors.white70),
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: isSelected ? Colors.white : Colors.white70,
+                          ),
                         ),
                       ),
                     ),

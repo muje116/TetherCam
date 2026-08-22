@@ -1,326 +1,427 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 
 interface StreamReceiverProps {
   deviceId: string;
   isVirtualCamActive?: boolean;
   isRecording?: boolean;
   muted?: boolean;
-  onStatsUpdate?: (stats: { fps?: number; latencyMs?: number; bitrate?: number; packetLoss?: number }) => void;
+  enableSnapshots?: boolean;
+  onStatsUpdate?: (stats: StreamStats) => void;
 }
 
-/** Debounce PC teardown so React StrictMode remounts don't kill an active WebRTC session */
-const closeTimers = new Map<string, ReturnType<typeof setTimeout>>();
+interface StreamStats {
+  fps?: number;
+  jitterMs?: number;
+  bitrate?: number;
+  packetLoss?: number;
+}
 
-function agentLog(location: string, message: string, data: Record<string, unknown>, hypothesisId: string) {
-  const payload = { sessionId: 'da00e2', location, message, data, hypothesisId };
-  window.electronAPI.debugLog(payload).catch(() => {});
-  fetch('http://127.0.0.1:7471/ingest/c7b9a979-3097-4a1a-bbbd-7ee829dcc96d', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': 'da00e2' },
-    body: JSON.stringify({ ...payload, timestamp: Date.now() }),
+type StreamSubscriber = (stream: MediaStream | null, live: boolean) => void;
+type StatsSubscriber = (stats: StreamStats) => void;
+
+interface InboundVideoSample {
+  timestamp: number;
+  bytesReceived: number;
+  packetsLost: number;
+  packetsReceived: number;
+}
+
+interface StreamSession {
+  deviceId: string;
+  pc: RTCPeerConnection;
+  stream: MediaStream | null;
+  isLive: boolean;
+  subscribers: Set<StreamSubscriber>;
+  statsSubscribers: Set<StatsSubscriber>;
+  pendingIceCandidates: RTCIceCandidateInit[];
+  lastHandledOffer: string | null;
+  offerQueue: Promise<void>;
+  reconnectRequested: boolean;
+  startupTimer: ReturnType<typeof setTimeout> | null;
+  reconnectTimer: ReturnType<typeof setTimeout> | null;
+  closeTimer: ReturnType<typeof setTimeout> | null;
+  statsInterval: ReturnType<typeof setInterval>;
+  lastInboundSample: InboundVideoSample | null;
+  removeOffer: () => void;
+  removeIce: () => void;
+}
+
+const streamSessions = new Map<string, StreamSession>();
+
+function isActiveSession(session: StreamSession): boolean {
+  return streamSessions.get(session.deviceId) === session;
+}
+
+function notifySession(session: StreamSession): void {
+  for (const subscriber of session.subscribers) subscriber(session.stream, session.isLive);
+}
+
+function closeSession(deviceId: string): void {
+  const session = streamSessions.get(deviceId);
+  if (!session) return;
+
+  clearTimeout(session.startupTimer ?? undefined);
+  clearTimeout(session.reconnectTimer ?? undefined);
+  clearTimeout(session.closeTimer ?? undefined);
+  clearInterval(session.statsInterval);
+  session.removeOffer();
+  session.removeIce();
+  session.pc.ontrack = null;
+  session.pc.onicecandidate = null;
+  session.pc.onconnectionstatechange = null;
+  session.pc.close();
+  session.stream?.getTracks().forEach((track) => track.stop());
+  session.stream = null;
+  session.isLive = false;
+  streamSessions.delete(deviceId);
+}
+
+function sendFreshStreamRequest(session: StreamSession): void {
+  void window.electronAPI.sendCommand(session.deviceId, 'request-stream', {}).then((ok) => {
+    if (!ok && isActiveSession(session) && session.subscribers.size > 0) {
+      session.reconnectRequested = false;
+      requestFreshStream(session);
+    }
+  });
+}
+
+function replacePeerConnection(session: StreamSession): void {
+  if (!isActiveSession(session) || session.subscribers.size === 0) return;
+
+  const oldPc = session.pc;
+  oldPc.ontrack = null;
+  oldPc.onicecandidate = null;
+  oldPc.onconnectionstatechange = null;
+  oldPc.close();
+  session.stream?.getTracks().forEach((track) => track.stop());
+  session.stream = null;
+  session.isLive = false;
+  session.pendingIceCandidates = [];
+  session.lastHandledOffer = null;
+  session.lastInboundSample = null;
+  session.pc = new RTCPeerConnection({
+    iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
+  });
+  bindPeerConnection(session);
+  notifySession(session);
+  sendFreshStreamRequest(session);
+}
+
+function requestFreshStream(session: StreamSession): void {
+  if (!isActiveSession(session) || session.subscribers.size === 0) return;
+  if (session.reconnectRequested || session.reconnectTimer) return;
+
+  session.reconnectRequested = true;
+  session.isLive = false;
+  notifySession(session);
+  session.reconnectTimer = setTimeout(() => {
+    session.reconnectTimer = null;
+    replacePeerConnection(session);
+  }, 500);
+}
+
+async function flushPendingIceCandidates(session: StreamSession): Promise<void> {
+  if (!session.pc.remoteDescription) return;
+
+  const pendingCandidates = [...session.pendingIceCandidates];
+  session.pendingIceCandidates = [];
+  for (const candidate of pendingCandidates) {
+    await session.pc.addIceCandidate(new RTCIceCandidate(candidate));
+  }
+}
+
+async function applyOffer(session: StreamSession, sdp: string): Promise<void> {
+  if (!sdp || !isActiveSession(session)) return;
+  if (session.lastHandledOffer === sdp) return;
+  if (session.pc.signalingState !== 'stable') return;
+
+  session.lastHandledOffer = sdp;
+  try {
+    await session.pc.setRemoteDescription(new RTCSessionDescription({ type: 'offer', sdp }));
+    await flushPendingIceCandidates(session);
+    const answer = await session.pc.createAnswer();
+    await session.pc.setLocalDescription(answer);
+    if (answer.sdp) await window.electronAPI.sendCommand(session.deviceId, 'sdp-answer', answer.sdp);
+    await window.electronAPI.clearPendingOffer(session.deviceId);
+  } catch (error) {
+    session.lastHandledOffer = null;
+    console.error('[StreamReceiver] Failed to apply SDP offer:', error);
+  }
+}
+
+function publishInboundStats(session: StreamSession, report: RTCInboundRtpStreamStats): void {
+  const timestamp = typeof report.timestamp === 'number' ? report.timestamp : Date.now();
+  const bytesReceived = report.bytesReceived ?? 0;
+  const packetsLost = report.packetsLost ?? 0;
+  const packetsReceived = report.packetsReceived ?? 0;
+  const previous = session.lastInboundSample;
+  session.lastInboundSample = { timestamp, bytesReceived, packetsLost, packetsReceived };
+
+  const stats: StreamStats = {
+    fps: typeof report.framesPerSecond === 'number' ? Math.round(report.framesPerSecond * 10) / 10 : undefined,
+    jitterMs: typeof report.jitter === 'number' ? Math.round(report.jitter * 1000 * 10) / 10 : undefined,
+    packetLoss: packetsLost + packetsReceived > 0
+      ? Math.round((packetsLost / (packetsLost + packetsReceived)) * 1000) / 10
+      : undefined,
+  };
+
+  if (previous && timestamp > previous.timestamp && bytesReceived >= previous.bytesReceived) {
+    const elapsedMs = timestamp - previous.timestamp;
+    stats.bitrate = Math.round(((bytesReceived - previous.bytesReceived) * 8) / elapsedMs);
+  }
+
+  for (const subscriber of session.statsSubscribers) subscriber(stats);
+}
+
+function bindPeerConnection(session: StreamSession): void {
+  const pc = session.pc;
+
+  pc.ontrack = (event) => {
+    if (!isActiveSession(session) || session.pc !== pc) return;
+
+    if (event.streams[0]) {
+      session.stream = event.streams[0];
+    } else if (!session.stream) {
+      session.stream = new MediaStream([event.track]);
+    } else if (!session.stream.getTracks().some((track) => track.id === event.track.id)) {
+      session.stream.addTrack(event.track);
+    }
+
+    if (event.track.kind === 'video') {
+      session.isLive = true;
+      session.reconnectRequested = false;
+      clearTimeout(session.startupTimer ?? undefined);
+      session.startupTimer = null;
+      notifySession(session);
+    }
+  };
+
+  pc.onconnectionstatechange = () => {
+    if (!isActiveSession(session) || session.pc !== pc) return;
+
+    if (pc.connectionState === 'connected') {
+      session.reconnectRequested = false;
+      clearTimeout(session.reconnectTimer ?? undefined);
+      session.reconnectTimer = null;
+    } else if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
+      requestFreshStream(session);
+    }
+  };
+
+  pc.onicecandidate = (event) => {
+    if (event.candidate && isActiveSession(session)) {
+      void window.electronAPI.sendCommand(session.deviceId, 'ice-candidate', event.candidate.toJSON());
+    }
+  };
+}
+
+function queueOffer(session: StreamSession, sdp: string): void {
+  session.offerQueue = session.offerQueue
+    .then(() => applyOffer(session, sdp))
+    .catch((error) => console.error('[StreamReceiver] Offer queue failed:', error));
+}
+
+function getOrCreateSession(deviceId: string): StreamSession {
+  const existing = streamSessions.get(deviceId);
+  if (existing) {
+    clearTimeout(existing.closeTimer ?? undefined);
+    existing.closeTimer = null;
+    return existing;
+  }
+
+  const session = {} as StreamSession;
+  session.deviceId = deviceId;
+  session.pc = new RTCPeerConnection({
+    iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
+  });
+  session.stream = null;
+  session.isLive = false;
+  session.subscribers = new Set();
+  session.statsSubscribers = new Set();
+  session.pendingIceCandidates = [];
+  session.lastHandledOffer = null;
+  session.offerQueue = Promise.resolve();
+  session.reconnectRequested = false;
+  session.startupTimer = null;
+  session.reconnectTimer = null;
+  session.closeTimer = null;
+  session.lastInboundSample = null;
+  session.removeOffer = () => {};
+  session.removeIce = () => {};
+  session.statsInterval = setInterval(async () => {
+    if (!isActiveSession(session) || session.pc.connectionState !== 'connected') return;
+    try {
+      const reports = await session.pc.getStats();
+      reports.forEach((report) => {
+        if (report.type === 'inbound-rtp' && report.kind === 'video') {
+          publishInboundStats(session, report as RTCInboundRtpStreamStats);
+        }
+      });
+    } catch {
+      // A peer can close while a stats request is in flight.
+    }
+  }, 2000);
+
+  bindPeerConnection(session);
+  streamSessions.set(deviceId, session);
+
+  session.removeOffer = window.electronAPI.onSdpOffer((data) => {
+    if (data.deviceId !== deviceId && data.clientIp !== deviceId) return;
+    queueOffer(session, data.sdp);
+  });
+
+  session.removeIce = window.electronAPI.onIceCandidate(async (data) => {
+    if (!isActiveSession(session) || (data.deviceId !== deviceId && data.clientIp !== deviceId)) return;
+    try {
+      if (!session.pc.remoteDescription) {
+        session.pendingIceCandidates.push(data.candidate);
+        return;
+      }
+      await session.pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+    } catch (error) {
+      console.error('[StreamReceiver] Failed to add ICE candidate:', error);
+    }
+  });
+
+  void window.electronAPI.getPendingOffer(deviceId).then((pending) => {
+    if (pending && isActiveSession(session)) queueOffer(session, pending.sdp);
   }).catch(() => {});
+
+  session.startupTimer = setTimeout(() => {
+    session.startupTimer = null;
+    if (isActiveSession(session) && session.pc.connectionState === 'new') requestFreshStream(session);
+  }, 10_000);
+
+  return session;
 }
 
-const StreamReceiver: React.FC<StreamReceiverProps> = ({ deviceId, isVirtualCamActive = false, isRecording = false, muted = true, onStatsUpdate }) => {
+const StreamReceiver: React.FC<StreamReceiverProps> = ({
+  deviceId,
+  isVirtualCamActive = false,
+  isRecording = false,
+  muted = true,
+  enableSnapshots = true,
+  onStatsUpdate,
+}) => {
   const videoRef = useRef<HTMLVideoElement>(null);
-  const [isLive, setIsLive] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const pcRef = useRef<RTCPeerConnection | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const recordedChunksRef = useRef<BlobPart[]>([]);
-  const lastHandledOfferRef = useRef<string | null>(null);
-  const pendingIceCandidatesRef = useRef<RTCIceCandidateInit[]>([]);
+  const [isLive, setIsLive] = useState(false);
+  const [activeStream, setActiveStream] = useState<MediaStream | null>(null);
   const onStatsUpdateRef = useRef(onStatsUpdate);
 
   useEffect(() => {
     onStatsUpdateRef.current = onStatsUpdate;
   }, [onStatsUpdate]);
 
+  const stopRecording = useCallback(() => {
+    const recorder = mediaRecorderRef.current;
+    if (recorder && recorder.state !== 'inactive') recorder.stop();
+  }, []);
+
   useEffect(() => {
-    // #region agent log
-    agentLog('StreamReceiver.tsx:mount', 'StreamReceiver effect mounted', { deviceId, isVirtualCamActive }, 'B');
-    // #endregion
-
-    const pendingClose = closeTimers.get(deviceId);
-    if (pendingClose) {
-      clearTimeout(pendingClose);
-      closeTimers.delete(deviceId);
-      // #region agent log
-      agentLog('StreamReceiver.tsx:mount', 'Cancelled pending PC close (StrictMode remount)', { deviceId }, 'B');
-      // #endregion
-    }
-
     if (isVirtualCamActive) {
-      console.log('[StreamReceiver] Background Virtual Camera mode active.');
-      setIsLive(true); // eslint-disable-line react-hooks/set-state-in-effect
-
-      const removeOffer = window.electronAPI.onSdpOffer(async (data: { deviceId?: string; clientIp?: string; sdp: string }) => {
+      const removeOffer = window.electronAPI.onSdpOffer(async (data) => {
         if (data.deviceId !== deviceId && data.clientIp !== deviceId) return;
         try {
           const answerSdp = await window.electronAPI.startVirtualCamera(deviceId, data.sdp);
-          await window.electronAPI.sendCommand(deviceId, 'sdp-answer', answerSdp);
-        } catch (err) {
-          console.error('[StreamReceiver] Failed to start background virtual camera:', err);
+          if (answerSdp) await window.electronAPI.sendCommand(deviceId, 'sdp-answer', answerSdp);
+        } catch (error) {
+          console.error('[StreamReceiver] Failed to start background virtual camera:', error);
         }
       });
 
-      return () => {
-        removeOffer();
-      };
+      void window.electronAPI.sendCommand(deviceId, 'request-stream', {});
+      return () => removeOffer();
     }
 
-    const pc = new RTCPeerConnection({
-      iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
-    });
-    pcRef.current = pc;
-
-    const sendAnswer = async (sdp: string) => {
-      await window.electronAPI.sendCommand(deviceId, 'sdp-answer', sdp);
-    };
-
-    const flushPendingIceCandidates = async () => {
-      if (!pc.remoteDescription) {
-        return;
-      }
-
-      const pendingCandidates = [...pendingIceCandidatesRef.current];
-      pendingIceCandidatesRef.current = [];
-
-      for (const candidate of pendingCandidates) {
-        await pc.addIceCandidate(new RTCIceCandidate(candidate));
+    const session = getOrCreateSession(deviceId);
+    const streamSubscriber: StreamSubscriber = (stream, live) => {
+      setActiveStream(stream);
+      setIsLive(live);
+      if (videoRef.current && videoRef.current.srcObject !== stream) {
+        videoRef.current.srcObject = stream;
+        void videoRef.current.play().catch(() => {});
       }
     };
+    const statsSubscriber: StatsSubscriber = (stats) => onStatsUpdateRef.current?.(stats);
 
-    const applyOffer = async (sdp: string) => {
-      if (!sdp) {
-        return;
-      }
+    session.subscribers.add(streamSubscriber);
+    session.statsSubscribers.add(statsSubscriber);
+    streamSubscriber(session.stream, session.isLive);
 
-      if (lastHandledOfferRef.current === sdp && pc.signalingState !== 'stable') {
-        lastHandledOfferRef.current = null;
-      }
+    const removeSnapshot = enableSnapshots
+      ? window.electronAPI.onCaptureSnapshotRequest(async (snapshotDeviceId) => {
+          if (snapshotDeviceId !== deviceId) return;
+          const video = videoRef.current;
+          const canvas = canvasRef.current;
+          if (!video || !canvas || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return;
 
-      if (!sdp || lastHandledOfferRef.current === sdp) {
-        // #region agent log
-        agentLog('StreamReceiver.tsx:applyOffer:skip', 'Offer skipped (empty or duplicate)', { deviceId, hasSdp: !!sdp, signalingState: pc.signalingState }, 'C');
-        // #endregion
-        return;
-      }
-
-      if (pc.signalingState !== 'stable') {
-        console.warn('[StreamReceiver] Ignoring duplicate or overlapping offer for', deviceId);
-        // #region agent log
-        agentLog('StreamReceiver.tsx:applyOffer:unstable', 'Offer rejected - signaling not stable', { deviceId, signalingState: pc.signalingState }, 'C');
-        // #endregion
-        return;
-      }
-
-      lastHandledOfferRef.current = sdp;
-      try {
-        await pc.setRemoteDescription(new RTCSessionDescription({ type: 'offer', sdp }));
-        await flushPendingIceCandidates();
-        const answer = await pc.createAnswer();
-        await pc.setLocalDescription(answer);
-        if (answer.sdp) {
-          await sendAnswer(answer.sdp);
-        }
-        await window.electronAPI.clearPendingOffer(deviceId);
-        // #region agent log
-        agentLog('StreamReceiver.tsx:applyOffer:ok', 'SDP answer sent', { deviceId, answerLen: answer.sdp?.length ?? 0, connectionState: pc.connectionState, iceState: pc.iceConnectionState }, 'C');
-        // #endregion
-      } catch (error) {
-        lastHandledOfferRef.current = null;
-        // #region agent log
-        agentLog('StreamReceiver.tsx:applyOffer:error', 'applyOffer failed', { deviceId, error: String(error) }, 'C');
-        // #endregion
-        throw error;
-      }
-    };
-
-    pc.ontrack = (event) => {
-      // #region agent log
-      agentLog('StreamReceiver.tsx:ontrack', 'Media track received', { deviceId, trackKind: event.track?.kind, streamCount: event.streams?.length ?? 0, hasVideoRef: !!videoRef.current }, 'D');
-      // #endregion
-      if (videoRef.current) {
-        if (event.streams && event.streams[0]) {
-          videoRef.current.srcObject = event.streams[0];
-        } else {
-          if (!videoRef.current.srcObject) {
-            videoRef.current.srcObject = new MediaStream([event.track]);
-          } else {
-            (videoRef.current.srcObject as MediaStream).addTrack(event.track);
-          }
-        }
-        setIsLive(true);
-      }
-    };
-
-    pc.onconnectionstatechange = () => {
-      // #region agent log
-      agentLog('StreamReceiver.tsx:connectionState', 'PC connection state changed', { deviceId, connectionState: pc.connectionState, iceConnectionState: pc.iceConnectionState, signalingState: pc.signalingState }, 'D');
-      // #endregion
-    };
-
-    pc.onicecandidate = (event) => {
-      if (event.candidate) {
-        const candidate = event.candidate.toJSON();
-        window.electronAPI.sendCommand(deviceId, 'ice-candidate', candidate);
-      }
-    };
-
-    const removeOffer = window.electronAPI.onSdpOffer(async (data: { deviceId?: string; clientIp?: string; sdp: string }) => {
-      const matched = data.deviceId === deviceId || data.clientIp === deviceId;
-      // #region agent log
-      agentLog('StreamReceiver.tsx:onSdpOffer', 'SDP offer received', { receiverDeviceId: deviceId, offerDeviceId: data.deviceId, clientIp: data.clientIp, matched, sdpLen: data.sdp?.length ?? 0 }, 'A');
-      // #endregion
-      if (!matched) return;
-      try {
-        await applyOffer(data.sdp);
-      } catch (error) {
-        console.error('[StreamReceiver] Failed to apply SDP offer:', error);
-      }
-    });
-
-    const removeIce = window.electronAPI.onIceCandidate(async (data: { deviceId?: string; clientIp?: string; candidate: RTCIceCandidateInit }) => {
-      if (data.deviceId !== deviceId && data.clientIp !== deviceId) return;
-      try {
-        if (!pc.remoteDescription) {
-          pendingIceCandidatesRef.current.push(data.candidate);
-          return;
-        }
-
-        await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
-      } catch (error) {
-        console.error('[StreamReceiver] Failed to add ICE candidate:', error);
-      }
-    });
-
-    // Replay any offer that arrived before this component mounted (timing race fix)
-    window.electronAPI.getPendingOffer(deviceId).then(async (pending) => {
-      // #region agent log
-      agentLog('StreamReceiver.tsx:getPendingOffer', 'Pending offer lookup', { deviceId, hasPending: !!pending, sdpLen: pending?.sdp?.length ?? 0, signalingState: pc.signalingState }, 'B');
-      // #endregion
-      if (pending && pc.signalingState === 'stable') {
-        console.log('[StreamReceiver] Replaying cached SDP offer for', deviceId);
-        try {
-          await applyOffer(pending.sdp);
-        } catch (error) {
-          console.error('[StreamReceiver] Failed to replay cached SDP offer:', error);
-        }
-      }
-    }).catch(() => {});
-
-    let streamRequested = false;
-    const reconnectTimer = setTimeout(() => {
-      if (pc.connectionState === 'connected' || pcRef.current !== pc) return;
-      if (streamRequested) return;
-      streamRequested = true;
-      lastHandledOfferRef.current = null;
-      // #region agent log
-      agentLog('StreamReceiver.tsx:reconnect', 'Requesting fresh stream from phone', { deviceId, connectionState: pc.connectionState, iceState: pc.iceConnectionState }, 'B');
-      // #endregion
-      void window.electronAPI.sendCommand(deviceId, 'request-stream', {});
-    }, 3000);
-
-    const removeSnapshot = window.electronAPI.onCaptureSnapshotRequest(async (snapshotDeviceId: string) => {
-      if (snapshotDeviceId !== deviceId) return;
-      const video = videoRef.current;
-      const canvas = canvasRef.current;
-      if (video && canvas) {
-        canvas.width = video.videoWidth || 1280;
-        canvas.height = video.videoHeight || 720;
-        const ctx = canvas.getContext('2d');
-        if (ctx) {
-          ctx.drawImage(video, 0, 0);
+          canvas.width = video.videoWidth || 1280;
+          canvas.height = video.videoHeight || 720;
+          const context = canvas.getContext('2d');
+          if (!context) return;
+          context.drawImage(video, 0, 0);
           const dataUrl = canvas.toDataURL('image/png');
-          const path = await window.electronAPI.saveSnapshot(dataUrl);
-          console.log('[Snapshot] Saved:', path);
-        }
-      }
-    });
-
-    const statsInterval = setInterval(async () => {
-      if (pc.connectionState === 'connected') {
-        try {
-          const stats = await pc.getStats();
-          stats.forEach(report => {
-            if (report.type === 'inbound-rtp' && report.kind === 'video') {
-              onStatsUpdateRef.current?.({
-                fps: report.framesPerSecond,
-                latencyMs: report.jitter ? Math.round(report.jitter * 1000) : undefined,
-                bitrate: report.bitrate ? Math.round(report.bitrate / 1000) : undefined,
-                packetLoss: report.packetsLost ?? undefined,
-              });
-            }
-          });
-        } catch (_) {}
-      }
-    }, 2000);
+          const savedPath = await window.electronAPI.saveSnapshot(dataUrl);
+          console.log('[Snapshot] Saved:', savedPath);
+        })
+      : undefined;
 
     return () => {
-      clearTimeout(reconnectTimer);
-      clearInterval(statsInterval);
-      removeOffer();
-      removeIce();
-      removeSnapshot();
-
-      const timer = setTimeout(() => {
-        closeTimers.delete(deviceId);
-        if (pcRef.current === pc) {
-          pc.close();
-          pcRef.current = null;
-        }
-        lastHandledOfferRef.current = null;
-        pendingIceCandidatesRef.current = [];
-      }, 800);
-      closeTimers.set(deviceId, timer);
+      removeSnapshot?.();
+      session.subscribers.delete(streamSubscriber);
+      session.statsSubscribers.delete(statsSubscriber);
+      if (session.subscribers.size === 0) {
+        session.closeTimer = setTimeout(() => closeSession(deviceId), 800);
+      }
     };
-  }, [deviceId, isVirtualCamActive]);
+  }, [deviceId, enableSnapshots, isVirtualCamActive]);
 
   useEffect(() => {
-    if (isRecording) {
-      if (videoRef.current && videoRef.current.srcObject) {
-        try {
-          const stream = videoRef.current.srcObject as MediaStream;
-          const options = { mimeType: 'video/webm; codecs=vp9' };
-          const mediaRecorder = new MediaRecorder(stream, MediaRecorder.isTypeSupported(options.mimeType) ? options : undefined);
-          mediaRecorderRef.current = mediaRecorder;
-          recordedChunksRef.current = [];
-
-          mediaRecorder.ondataavailable = (event) => {
-            if (event.data.size > 0) {
-              recordedChunksRef.current.push(event.data);
-            }
-          };
-
-          mediaRecorder.onstop = () => {
-            const blob = new Blob(recordedChunksRef.current, { type: 'video/webm' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.style.display = 'none';
-            a.href = url;
-            a.download = `TetherCam_Record_${deviceId}_${new Date().getTime()}.webm`;
-            document.body.appendChild(a);
-            a.click();
-            setTimeout(() => {
-              document.body.removeChild(a);
-              URL.revokeObjectURL(url);
-            }, 100);
-          };
-
-          mediaRecorder.start(1000);
-          console.log('[StreamReceiver] Recording started');
-        } catch (e) {
-          console.error('[StreamReceiver] Error starting MediaRecorder:', e);
-        }
-      }
-    } else {
-      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-        mediaRecorderRef.current.stop();
-        console.log('[StreamReceiver] Recording stopped');
-      }
+    if (!isRecording || !activeStream) {
+      stopRecording();
+      return;
     }
-  }, [isRecording, deviceId]);
+    if (mediaRecorderRef.current?.state === 'recording') return;
+
+    try {
+      const supportedMimeTypes = [
+        'video/webm; codecs=vp9',
+        'video/webm; codecs=vp8',
+        'video/webm',
+      ];
+      const mimeType = supportedMimeTypes.find((candidate) => MediaRecorder.isTypeSupported(candidate));
+      const recorder = new MediaRecorder(activeStream, mimeType ? { mimeType } : undefined);
+      mediaRecorderRef.current = recorder;
+      recordedChunksRef.current = [];
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) recordedChunksRef.current.push(event.data);
+      };
+      recorder.onstop = () => {
+        const blob = new Blob(recordedChunksRef.current, { type: recorder.mimeType || 'video/webm' });
+        if (blob.size > 0) {
+          const url = URL.createObjectURL(blob);
+          const anchor = document.createElement('a');
+          anchor.href = url;
+          anchor.download = `TetherCam_Record_${deviceId}_${Date.now()}.webm`;
+          document.body.appendChild(anchor);
+          anchor.click();
+          anchor.remove();
+          URL.revokeObjectURL(url);
+        }
+        if (mediaRecorderRef.current === recorder) mediaRecorderRef.current = null;
+      };
+      recorder.start(1000);
+    } catch (error) {
+      console.error('[StreamReceiver] Error starting MediaRecorder:', error);
+    }
+
+    return stopRecording;
+  }, [activeStream, deviceId, isRecording, stopRecording]);
+
+  useEffect(() => () => stopRecording(), [stopRecording]);
 
   if (isVirtualCamActive) {
     return (
@@ -328,7 +429,7 @@ const StreamReceiver: React.FC<StreamReceiverProps> = ({ deviceId, isVirtualCamA
         display: 'flex', flexDirection: 'column', alignItems: 'center',
         justifyContent: 'center', height: '100%', width: '100%',
         background: 'rgba(10, 10, 15, 0.95)', textAlign: 'center',
-        color: '#fff', padding: '24px', boxSizing: 'border-box'
+        color: '#fff', padding: '24px', boxSizing: 'border-box',
       }}>
         <div className="pulse-broadcast" style={{
           width: '64px', height: '64px', borderRadius: '50%',
@@ -343,15 +444,15 @@ const StreamReceiver: React.FC<StreamReceiverProps> = ({ deviceId, isVirtualCamA
           Broadcasting to Virtual Camera
         </h3>
         <p className="subtext" style={{ fontSize: '0.85rem', color: '#94a3b8', margin: '0 0 20px 0', maxWidth: '300px' }}>
-          Phone feed is routed directly through FFmpeg for low-latency streaming.
+          The desktop output pipeline is negotiating the phone feed.
         </p>
         <div className="stats-mini" style={{
           background: 'rgba(255, 255, 255, 0.03)', border: '1px solid rgba(255, 255, 255, 0.08)',
           borderRadius: '8px', padding: '12px 16px', fontSize: '0.78rem',
           textAlign: 'left', width: '100%', maxWidth: '320px',
-          display: 'flex', flexDirection: 'column', gap: '6px'
+          display: 'flex', flexDirection: 'column', gap: '6px',
         }}>
-          <div style={{color: '#94a3b8'}}>RTSP: <code style={{color: '#a5b4fc'}}>tcp://127.0.0.1:8554</code></div>
+          <div style={{ color: '#94a3b8' }}>RTSP: <code style={{ color: '#a5b4fc' }}>tcp://127.0.0.1:8554</code></div>
         </div>
       </div>
     );
@@ -360,13 +461,7 @@ const StreamReceiver: React.FC<StreamReceiverProps> = ({ deviceId, isVirtualCamA
   return (
     <div className="stream-receiver">
       {!isLive && <div className="loading-overlay">Waiting for stream...</div>}
-      <video
-        ref={videoRef}
-        autoPlay
-        playsInline
-        muted={muted}
-        className="live-video"
-      />
+      <video ref={videoRef} autoPlay playsInline muted={muted} className="live-video" />
       <canvas ref={canvasRef} style={{ display: 'none' }} />
     </div>
   );

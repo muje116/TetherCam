@@ -34,8 +34,11 @@ class MobileNetworkInfo {
 
   static Future<bool> isUsbConnected() async {
     try {
-      final socket = await Socket.connect('127.0.0.1', 4747,
-          timeout: const Duration(seconds: 2));
+      final socket = await Socket.connect(
+        '127.0.0.1',
+        4747,
+        timeout: const Duration(seconds: 2),
+      );
       socket.destroy();
       return true;
     } catch (_) {

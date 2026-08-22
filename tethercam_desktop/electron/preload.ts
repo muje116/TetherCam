@@ -19,12 +19,32 @@ export interface DeviceInfo {
 }
 
 export interface StreamStats {
-  deviceId: string;
-  latencyMs: number;
-  fps: number;
-  bitrate: number;
-  packetLoss: number;
-  resolution: string;
+  deviceId?: string;
+  fps?: number;
+  latencyMs?: number;
+  resolution?: string;
+  jitterMs?: number;
+  bitrate?: number;
+  packetLoss?: number;
+}
+
+export interface SdpOfferEvent {
+  deviceId?: string;
+  clientIp?: string;
+  sdp: string;
+}
+
+export interface IceCandidateEvent {
+  deviceId?: string;
+  clientIp?: string;
+  candidate: RTCIceCandidateInit;
+}
+
+export interface UsbDevice {
+  id: string;
+  model?: string;
+  manufacturer?: string;
+  status?: string;
 }
 
 export interface ServerInfo {
@@ -49,7 +69,7 @@ const electronAPI = {
   getConnectionUrl: (): Promise<string> => ipcRenderer.invoke('get-connection-url'),
   getAllAddresses: (): Promise<string[]> => ipcRenderer.invoke('get-all-addresses'),
   disconnectDevice: (deviceId: string): Promise<void> => ipcRenderer.invoke('disconnect-device', deviceId),
-  getUsbDevices: (): Promise<any[]> => ipcRenderer.invoke('get-usb-devices'),
+  getUsbDevices: (): Promise<UsbDevice[]> => ipcRenderer.invoke('get-usb-devices'),
   enableUsbForwarding: (deviceId: string): Promise<boolean> => ipcRenderer.invoke('enable-usb-forwarding', deviceId),
   launchPhoneApp: (deviceId: string): Promise<boolean> => ipcRenderer.invoke('launch-phone-app', deviceId),
   getDiagnosticLogs: (): Promise<string[]> => ipcRenderer.invoke('get-diagnostic-logs'),
@@ -62,8 +82,6 @@ const electronAPI = {
     ipcRenderer.invoke('get-pending-offer', deviceId),
   clearPendingOffer: (deviceId: string): Promise<void> =>
     ipcRenderer.invoke('clear-pending-offer', deviceId),
-  debugLog: (payload: Record<string, unknown>): Promise<void> =>
-    ipcRenderer.invoke('debug-log', payload),
   getDiscoveredDevices: (): Promise<DiscoveredPhone[]> => ipcRenderer.invoke('get-discovered-devices'),
   scanForDevices: (): Promise<DiscoveredPhone[]> => ipcRenderer.invoke('scan-for-devices'),
   invitePhone: (phoneIp: string): Promise<{ ok: boolean; error?: string }> =>
@@ -79,7 +97,7 @@ const electronAPI = {
     ipcRenderer.invoke('snap-projector', position),
 
   // Remote control
-  sendCommand: (deviceId: string, command: string, payload?: unknown): Promise<void> =>
+  sendCommand: (deviceId: string, command: string, payload?: unknown): Promise<boolean> =>
     ipcRenderer.invoke('send-command', deviceId, command, payload),
 
   // Event listeners
@@ -89,8 +107,8 @@ const electronAPI = {
     return () => ipcRenderer.removeListener('device-connected', listener);
   },
 
-  onDeviceDiscovered: (callback: (device: any) => void) => {
-    const listener = (_event: Electron.IpcRendererEvent, device: any) => callback(device);
+  onDeviceDiscovered: (callback: (device: DiscoveredPhone) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, device: DiscoveredPhone) => callback(device);
     ipcRenderer.on('device-discovered', listener);
     return () => ipcRenderer.removeListener('device-discovered', listener);
   },
@@ -113,14 +131,14 @@ const electronAPI = {
     return () => ipcRenderer.removeListener('stream-stats', listener);
   },
 
-  onSdpOffer: (callback: (data: any) => void) => {
-    const listener = (_event: Electron.IpcRendererEvent, data: any) => callback(data);
+  onSdpOffer: (callback: (data: SdpOfferEvent) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, data: SdpOfferEvent) => callback(data);
     ipcRenderer.on('sdp-offer', listener);
     return () => ipcRenderer.removeListener('sdp-offer', listener);
   },
 
-  onIceCandidate: (callback: (data: any) => void) => {
-    const listener = (_event: Electron.IpcRendererEvent, data: any) => callback(data);
+  onIceCandidate: (callback: (data: IceCandidateEvent) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, data: IceCandidateEvent) => callback(data);
     ipcRenderer.on('ice-candidate', listener);
     return () => ipcRenderer.removeListener('ice-candidate', listener);
   },

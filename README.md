@@ -8,7 +8,8 @@ Use an Android phone as a low-latency camera source for desktop production workf
 - Supports **WiFi**, **USB (ADB)**, and **Bluetooth-assisted** pairing
 - Desktop can **scan for phones**, **invite by IP**, or wait for mobile to connect
 - Provides QR-based onboarding, mDNS discovery, and manual endpoint input
-- Exposes device control commands from desktop to mobile
+- Exposes device control commands from desktop to mobile (camera, microphone, torch, and camera flip)
+- Includes stream health stats, reconnect handling, snapshots, browser recording, and a borderless projector window
 
 ## Project Structure
 
@@ -130,4 +131,18 @@ npm run build
 ```bash
 cd tethercam_mobile
 flutter test
+flutter analyze --no-pub
 ```
+
+## Output notes
+
+- The borderless Projector window and browser-source URL are the most portable desktop outputs.
+- Recording is saved as a WebM download from the desktop receiver.
+- Snapshot capture writes a PNG to the desktop Pictures folder.
+- Virtual Camera output is experimental and depends on the platform's camera/audio device drivers (OBS Virtual Camera on Windows, for example). The RTSP endpoint is `tcp://127.0.0.1:8554` when the pipeline starts successfully.
+
+## Known network requirements
+
+- mDNS discovery requires multicast traffic to be allowed on the active private network. Manual IP, QR, and desktop Invite remain available when multicast is blocked.
+- Bluetooth is a pairing aid only; video still travels over Wi-Fi or USB/ADB.
+- USB mode requires the phone to be `device` status in `adb devices`, with USB debugging enabled.

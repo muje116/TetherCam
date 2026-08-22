@@ -17,7 +17,7 @@ interface PendingPhone {
 
 interface StreamStats {
   fps?: number;
-  latencyMs?: number;
+  jitterMs?: number;
   bitrate?: number;
   packetLoss?: number;
 }
@@ -67,14 +67,21 @@ const MainView: React.FC = () => {
   const [streamStats, setStreamStats] = useState<Record<string, StreamStats>>({});
   const [isVirtualCamActive, setIsVirtualCamActive] = useState<boolean>(false);
   const [isRecording, setIsRecording] = useState<boolean>(false);
+  const [controlStatus, setControlStatus] = useState<string>('');
 
   const toggleVirtualCam = useCallback(async () => {
     if (!selectedDeviceId) return;
-    if (isVirtualCamActive) {
-      await window.electronAPI.stopVirtualCamera();
-      setIsVirtualCamActive(false);
-    } else {
-      setIsVirtualCamActive(true);
+    try {
+      if (isVirtualCamActive) {
+        const stopped = await window.electronAPI.stopVirtualCamera();
+        setIsVirtualCamActive(false);
+        setControlStatus(stopped ? 'Virtual camera stopped' : 'Virtual camera was not running');
+      } else {
+        setIsVirtualCamActive(true);
+        setControlStatus('Virtual camera starting…');
+      }
+    } catch (error) {
+      setControlStatus(`Virtual camera error: ${error instanceof Error ? error.message : String(error)}`);
     }
   }, [selectedDeviceId, isVirtualCamActive]);
 
@@ -185,7 +192,8 @@ const MainView: React.FC = () => {
 
   const handleSnapshot = useCallback(async () => {
     if (!selectedDeviceId) return;
-    await window.electronAPI.captureSnapshot(selectedDeviceId);
+    const requested = await window.electronAPI.captureSnapshot(selectedDeviceId);
+    setControlStatus(requested ? 'Snapshot requested — check your Pictures folder' : 'Snapshot failed');
   }, [selectedDeviceId]);
 
   useEffect(() => {
@@ -261,6 +269,11 @@ const MainView: React.FC = () => {
     const removeDisconnected = window.electronAPI.onDeviceDisconnected((deviceId: string) => {
       setConnectedDevices((prev) => prev.filter((d) => d.id !== deviceId));
       setSelectedDeviceId((prev) => (prev === deviceId ? null : prev));
+      setStreamStats((prev) => {
+        const next = { ...prev };
+        delete next[deviceId];
+        return next;
+      });
     });
 
     const removeUpdated = window.electronAPI.onDeviceUpdated((device: DeviceInfo) => {
@@ -288,6 +301,19 @@ const MainView: React.FC = () => {
 
   const selectedDevice = connectedDevices.find((d) => d.id === selectedDeviceId);
   const currentStats = selectedDeviceId ? streamStats[selectedDeviceId] : undefined;
+
+  const sendDeviceCommand = useCallback(async (command: string, payload?: unknown) => {
+    if (!selectedDeviceId) return false;
+    const ok = await window.electronAPI.sendCommand(selectedDeviceId, command, payload);
+    setControlStatus(ok ? `${command} sent` : 'Device is no longer connected');
+    return ok;
+  }, [selectedDeviceId]);
+
+  const disconnectSelectedDevice = useCallback(async () => {
+    if (!selectedDeviceId) return;
+    await window.electronAPI.disconnectDevice(selectedDeviceId);
+    setControlStatus('Device disconnected');
+  }, [selectedDeviceId]);
 
   return (
     <div className="app-container">
@@ -453,18 +479,17 @@ const MainView: React.FC = () => {
                   {isRecording ? '⏹️ Stop Recording' : '⏺️ Record Stream'}
                 </button>
                 <div className="integration-help">
-                  <p className="integration-title">📡 NDI via OBS (Recommended)</p>
+                  <p className="integration-title">📡 Desktop output</p>
                   <ol>
-                    <li>Install <strong>OBS Studio</strong> + <strong>obs-ndi</strong> plugin</li>
+                    <li>Use <strong>Borderless Projector</strong> as a browser or window source</li>
                     <li>In OBS → Add <strong>Browser Source</strong>:<br/>
                       <code>http://localhost:4747/?projector=true&deviceId={selectedDeviceId}</code>
                     </li>
-                    <li>Or add <strong>Media Source</strong> (RTSP):<br/>
+                    <li>Or use the experimental <strong>Virtual Cam</strong> output at:<br/>
                       <code>tcp://127.0.0.1:8554</code>
                     </li>
-                    <li>Activate <strong>NDI Output</strong> in OBS Tools menu to broadcast as NDI on the network</li>
                   </ol>
-                  <p className="integration-note">Other apps (vMix, Resolume, Wirecast) can pick up the NDI feed automatically.</p>
+                  <p className="integration-note">If a command cannot be delivered, the status message above will say so.</p>
                 </div>
               </>
             ) : (
@@ -499,9 +524,9 @@ const MainView: React.FC = () => {
                 {currentStats && (
                   <div className="stream-stats-overlay">
                     <span>{currentStats.fps ?? '--'} FPS</span>
-                    <span>{currentStats.latencyMs ?? '--'} ms</span>
+                    <span>{currentStats.jitterMs ?? '--'} ms jitter</span>
                     <span>{currentStats.bitrate ?? '--'} kbps</span>
-                    {currentStats.packetLoss != null && <span>Loss: {currentStats.packetLoss}</span>}
+                    {currentStats.packetLoss != null && <span>Loss: {currentStats.packetLoss}%</span>}
                   </div>
                 )}
                 <div className="focus-controls">
@@ -517,16 +542,16 @@ const MainView: React.FC = () => {
                     )}
                   </div>
                   <div className="action-group">
-                    <button className="btn-icon" title="Toggle Camera" onClick={() => window.electronAPI.sendCommand(selectedDeviceId, 'toggle-camera-state')}>
+                    <button className="btn-icon" title="Toggle Camera" onClick={() => void sendDeviceCommand('toggle-camera-state')}>
                       📹
                     </button>
-                    <button className="btn-icon" title="Toggle Mic" onClick={() => window.electronAPI.sendCommand(selectedDeviceId, 'toggle-mic-state')}>
+                    <button className="btn-icon" title="Toggle Mic" onClick={() => void sendDeviceCommand('toggle-mic-state')}>
                       🎙️
                     </button>
-                    <button className="btn-icon" title="Flip" onClick={() => window.electronAPI.sendCommand(selectedDeviceId, 'toggle-camera')}>
+                    <button className="btn-icon" title="Flip" onClick={() => void sendDeviceCommand('toggle-camera')}>
                       🔄
                     </button>
-                    <button className="btn-icon" title="Flash" onClick={() => window.electronAPI.sendCommand(selectedDeviceId, 'toggle-torch')}>
+                    <button className="btn-icon" title="Flash" onClick={() => void sendDeviceCommand('toggle-torch')}>
                       🔦
                     </button>
                     <button className="btn-icon" title="Fullscreen" onClick={() => {
@@ -542,8 +567,12 @@ const MainView: React.FC = () => {
                     <button className="btn-icon" title="Popout (Open in New Window)" onClick={() => window.electronAPI.openProjector(selectedDeviceId)}>
                       🪟
                     </button>
+                    <button className="btn-icon" title="Disconnect" onClick={() => void disconnectSelectedDevice()}>
+                      ⏏️
+                    </button>
                   </div>
                 </div>
+                {controlStatus && <p className="search-status control-status">{controlStatus}</p>}
               </div>
             ) : (
               <div className="no-selection">
@@ -561,26 +590,12 @@ const MainView: React.FC = () => {
                 onClick={() => setSelectedDeviceId(device.id)}
               >
                 <div className="mini-preview">
-                  {selectedDeviceId === device.id ? (
-                    <div
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        width: '100%',
-                        height: '100%',
-                        color: 'var(--muted)',
-                        fontSize: '0.8rem',
-                        textAlign: 'center',
-                        padding: '12px',
-                        boxSizing: 'border-box',
-                      }}
-                    >
-                      Live preview is active in the main stage
-                    </div>
-                  ) : (
-                    <StreamReceiver deviceId={device.id} isVirtualCamActive={false} muted={true} />
-                  )}
+                  <StreamReceiver
+                    deviceId={device.id}
+                    isVirtualCamActive={isVirtualCamActive && selectedDeviceId === device.id}
+                    muted={true}
+                    enableSnapshots={selectedDeviceId !== device.id}
+                  />
                 </div>
                 <div className="mini-info">
                   <span>{device.name}</span>

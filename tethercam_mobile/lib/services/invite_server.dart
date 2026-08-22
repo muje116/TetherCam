@@ -14,7 +14,11 @@ class InviteServer {
   Future<void> start() async {
     if (_server != null) return;
     try {
-      _server = await HttpServer.bind(InternetAddress.anyIPv4, invitePort, shared: true);
+      _server = await HttpServer.bind(
+        InternetAddress.anyIPv4,
+        invitePort,
+        shared: true,
+      );
       debugPrint('[InviteServer] Listening on :$invitePort');
       _server!.listen(_handleRequest);
     } catch (e) {
@@ -43,21 +47,27 @@ class InviteServer {
       request.response.headers.add('Access-Control-Allow-Origin', '*');
       request.response.headers.contentType = ContentType.json;
 
-      if (path == '/api/info') {
-        request.response.write(jsonEncode({
-          'app': 'TetherCam Mobile',
-          'role': 'mobile',
-          'invitePort': invitePort,
-        }));
+      if (path == '/api/info' && request.method == 'GET') {
+        request.response.write(
+          jsonEncode({
+            'app': 'TetherCam Mobile',
+            'role': 'mobile',
+            'invitePort': invitePort,
+          }),
+        );
       } else if (path == '/api/invite' && request.method == 'GET') {
         final url = request.uri.queryParameters['url'];
         if (url == null || url.isEmpty) {
           request.response.statusCode = HttpStatus.badRequest;
-          request.response.write(jsonEncode({'error': 'Missing url parameter'}));
+          request.response.write(
+            jsonEncode({'error': 'Missing url parameter'}),
+          );
         } else {
           debugPrint('[InviteServer] Invite received: $url');
           onInvite?.call(url);
-          request.response.write(jsonEncode({'status': 'ok', 'message': 'Connecting to desktop'}));
+          request.response.write(
+            jsonEncode({'status': 'ok', 'message': 'Connecting to desktop'}),
+          );
         }
       } else {
         request.response.statusCode = HttpStatus.notFound;

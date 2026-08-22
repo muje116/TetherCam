@@ -13,6 +13,7 @@ class BluetoothDiscoveryService {
   final FlutterBluetoothSerial _bt = FlutterBluetoothSerial.instance;
   StreamSubscription<BluetoothDiscoveryResult>? _discoverySub;
   StreamController<BluetoothDeviceInfo>? _discoveryController;
+  bool _controllerClosed = true;
 
   Future<bool> get isAvailable async {
     try {
@@ -39,22 +40,33 @@ class BluetoothDiscoveryService {
   }
 
   Stream<BluetoothDeviceInfo> discover() {
+    stopDiscovery();
+    if (!_controllerClosed) {
+      _safeCloseController();
+    }
     _discoveryController = StreamController<BluetoothDeviceInfo>.broadcast();
+    _controllerClosed = false;
 
     try {
-      _discoverySub = _bt.startDiscovery().listen((result) {
-        if (result.device.name != null && result.device.name!.isNotEmpty) {
-          _discoveryController?.add(BluetoothDeviceInfo(
-            name: result.device.name!,
-            address: result.device.address,
-          ));
-        }
-      }, onError: (error) {
-        debugPrint('BT discovery error: $error');
-        _discoveryController?.addError(error);
-      }, onDone: () {
-        _discoveryController?.close();
-      });
+      _discoverySub = _bt.startDiscovery().listen(
+        (result) {
+          if (result.device.name != null && result.device.name!.isNotEmpty) {
+            _discoveryController?.add(
+              BluetoothDeviceInfo(
+                name: result.device.name!,
+                address: result.device.address,
+              ),
+            );
+          }
+        },
+        onError: (error) {
+          debugPrint('BT discovery error: $error');
+          _discoveryController?.addError(error);
+        },
+        onDone: () {
+          _safeCloseController();
+        },
+      );
     } catch (error) {
       debugPrint('BT start discovery error: $error');
       _discoveryController?.addError(error);
@@ -77,11 +89,19 @@ class BluetoothDiscoveryService {
 
   void stopDiscovery() {
     _discoverySub?.cancel();
+    _discoverySub = null;
     _bt.cancelDiscovery();
+    _safeCloseController();
   }
 
   void dispose() {
     stopDiscovery();
+    _safeCloseController();
+  }
+
+  void _safeCloseController() {
+    if (_controllerClosed) return;
+    _controllerClosed = true;
     _discoveryController?.close();
   }
 }

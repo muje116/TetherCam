@@ -25,7 +25,9 @@ class ConnectionCoordinator {
   Future<void> _refreshAdvertisement() async {
     final ip = await _resolveIp();
     if (ip == null) {
-      debugPrint('[ConnectionCoordinator] No LAN IP — mDNS advertisement skipped');
+      debugPrint(
+        '[ConnectionCoordinator] No LAN IP — mDNS advertisement skipped',
+      );
       return;
     }
 
@@ -45,7 +47,9 @@ class ConnectionCoordinator {
       final interfaces = await NetworkInterface.list();
       for (final iface in interfaces) {
         final lower = iface.name.toLowerCase();
-        if (lower.contains('wlan') || lower.contains('wifi') || lower.contains('eth')) {
+        if (lower.contains('wlan') ||
+            lower.contains('wifi') ||
+            lower.contains('eth')) {
           for (final addr in iface.addresses) {
             if (addr.type == InternetAddressType.IPv4 &&
                 !addr.isLoopback &&

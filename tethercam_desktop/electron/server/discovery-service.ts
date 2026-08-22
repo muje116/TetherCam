@@ -28,6 +28,7 @@ export class DiscoveryService extends EventEmitter {
   private queryInterval: ReturnType<typeof setInterval> | null = null;
   private announceInterval: ReturnType<typeof setInterval> | null = null;
   private hostname = os.hostname();
+  private started = false;
 
   constructor() {
     super();
@@ -35,6 +36,8 @@ export class DiscoveryService extends EventEmitter {
   }
 
   start() {
+    if (this.started) return;
+    this.started = true;
     console.log('[DiscoveryService] Starting mDNS discovery and advertisement');
 
     this.advertise();
@@ -202,6 +205,7 @@ export class DiscoveryService extends EventEmitter {
   }
 
   triggerScan(): void {
+    if (!this.started) return;
     this.query();
     this.announce();
   }
@@ -217,6 +221,8 @@ export class DiscoveryService extends EventEmitter {
   }
 
   stop() {
+    if (!this.started) return;
+    this.started = false;
     if (this.queryInterval) {
       clearInterval(this.queryInterval);
       this.queryInterval = null;

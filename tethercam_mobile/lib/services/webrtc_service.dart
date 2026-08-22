@@ -48,11 +48,14 @@ class WebRTCService {
   MediaStream? _localStream;
   final SignalingClient _signalingClient;
   StreamConfig _config = const StreamConfig();
-  
+  ValueChanged<MediaStream?>? onLocalStream;
+  bool _torchEnabled = false;
+
   final List<RTCIceCandidate> _pendingIceCandidates = [];
   bool _isRemoteDescriptionSet = false;
 
   StreamConfig get config => _config;
+  bool get torchEnabled => _torchEnabled;
 
   WebRTCService(this._signalingClient);
 
@@ -63,14 +66,11 @@ class WebRTCService {
   Map<String, dynamic> get _iceServers => {
     'iceServers': [
       {'urls': 'stun:stun.l.google.com:19302'},
-    ]
+    ],
   };
 
   Map<String, dynamic> get _configConstraints => {
-    'mandatory': {
-      'OfferToReceiveAudio': false,
-      'OfferToReceiveVideo': false,
-    },
+    'mandatory': {'OfferToReceiveAudio': false, 'OfferToReceiveVideo': false},
     'optional': [],
   };
 
@@ -81,7 +81,10 @@ class WebRTCService {
     _pendingIceCandidates.clear();
 
     debugPrint('[PHASE] WEBRTC START');
-    _peerConnection = await createPeerConnection(_iceServers, _configConstraints);
+    _peerConnection = await createPeerConnection(
+      _iceServers,
+      _configConstraints,
+    );
 
     final Map<String, dynamic> mediaConstraints = {
       'audio': true,
@@ -96,14 +99,15 @@ class WebRTCService {
         },
         'facingMode': useFrontCamera ? 'user' : 'environment',
         'optional': [],
-      }
+      },
     };
 
     _localStream = await navigator.mediaDevices.getUserMedia(mediaConstraints);
+    onLocalStream?.call(_localStream);
 
-    _localStream!.getTracks().forEach((track) {
-      _peerConnection!.addTrack(track, _localStream!);
-    });
+    for (final track in _localStream!.getTracks()) {
+      await _peerConnection!.addTrack(track, _localStream!);
+    }
 
     _peerConnection!.onIceCandidate = (candidate) {
       if (candidate.candidate == null) return;
@@ -115,7 +119,7 @@ class WebRTCService {
           'sdpMLineIndex': candidate.sdpMLineIndex,
           'sdpMid': candidate.sdpMid,
           'candidate': candidate.candidate,
-        }
+        },
       });
     };
 
@@ -140,7 +144,9 @@ class WebRTCService {
     final localDescription = await _peerConnection!.getLocalDescription();
     final localSdp = localDescription?.sdp;
     if (localSdp == null || localSdp.isEmpty) {
-      throw StateError('WebRTC localDescription SDP is empty after setLocalDescription.');
+      throw StateError(
+        'WebRTC localDescription SDP is empty after setLocalDescription.',
+      );
     }
 
     _signalingClient.send({
@@ -172,7 +178,9 @@ class WebRTCService {
       candidate['sdpMLineIndex'],
     );
     if (!_isRemoteDescriptionSet) {
-      debugPrint('[PHASE] Queuing remote ICE candidate (SDP answer not yet set)');
+      debugPrint(
+        '[PHASE] Queuing remote ICE candidate (SDP answer not yet set)',
+      );
       _pendingIceCandidates.add(rtcCandidate);
       return;
     }
@@ -185,6 +193,24 @@ class WebRTCService {
     final videoTracks = _localStream!.getVideoTracks();
     if (videoTracks.isNotEmpty) {
       await Helper.switchCamera(videoTracks.first);
+      _torchEnabled = false;
+    }
+  }
+
+  Future<bool?> toggleTorch() async {
+    final videoTracks = _localStream?.getVideoTracks() ?? [];
+    if (videoTracks.isEmpty) return null;
+
+    final track = videoTracks.first;
+    try {
+      if (!await track.hasTorch()) return null;
+      final nextState = !_torchEnabled;
+      await track.setTorch(nextState);
+      _torchEnabled = nextState;
+      return _torchEnabled;
+    } catch (error) {
+      debugPrint('WebRTC torch toggle error: $error');
+      return null;
     }
   }
 
@@ -205,6 +231,8 @@ class WebRTCService {
   Future<void> stop() async {
     _isRemoteDescriptionSet = false;
     _pendingIceCandidates.clear();
+    _torchEnabled = false;
+    onLocalStream?.call(null);
     await _localStream?.dispose();
     _localStream = null;
     await _peerConnection?.close();

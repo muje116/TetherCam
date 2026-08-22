@@ -23,20 +23,31 @@ class CameraService {
   double get minExposureOffset => _minExposureOffset;
   double get maxExposureOffset => _maxExposureOffset;
 
-  Future<void> initialize({CameraDescription? camera, ResolutionPreset preset = ResolutionPreset.veryHigh}) async {
+  Future<void> initialize({
+    CameraDescription? camera,
+    ResolutionPreset preset = ResolutionPreset.veryHigh,
+  }) async {
+    await _controller?.dispose();
+    _controller = null;
+    _isInitialized = false;
     _cameras = await availableCameras();
     if (_cameras.isEmpty) return;
     await _initCamera(camera ?? _cameras.first, preset: preset);
   }
 
-  Future<void> _initCamera(CameraDescription camera, {ResolutionPreset preset = ResolutionPreset.veryHigh}) async {
+  Future<void> _initCamera(
+    CameraDescription camera, {
+    ResolutionPreset preset = ResolutionPreset.veryHigh,
+  }) async {
     _isFrontCamera = camera.lensDirection == CameraLensDirection.front;
 
     _controller = CameraController(
       camera,
       preset,
       enableAudio: true,
-      imageFormatGroup: Platform.isAndroid ? ImageFormatGroup.yuv420 : ImageFormatGroup.bgra8888,
+      imageFormatGroup: Platform.isAndroid
+          ? ImageFormatGroup.yuv420
+          : ImageFormatGroup.bgra8888,
     );
 
     try {
@@ -49,6 +60,9 @@ class CameraService {
       _isInitialized = true;
     } catch (e) {
       debugPrint('Camera initialization error: $e');
+      await _controller?.dispose();
+      _controller = null;
+      _isInitialized = false;
     }
   }
 
@@ -61,15 +75,19 @@ class CameraService {
   }
 
   Future<void> toggleCamera() async {
-    if (_cameras.length < 2) return;
+    if (_cameras.length < 2 || _controller == null) return;
 
     final lensDirection = _controller!.description.lensDirection;
     CameraDescription newCamera;
 
     if (lensDirection == CameraLensDirection.front) {
-      newCamera = _cameras.firstWhere((c) => c.lensDirection == CameraLensDirection.back);
+      newCamera = _cameras.firstWhere(
+        (c) => c.lensDirection == CameraLensDirection.back,
+      );
     } else {
-      newCamera = _cameras.firstWhere((c) => c.lensDirection == CameraLensDirection.front);
+      newCamera = _cameras.firstWhere(
+        (c) => c.lensDirection == CameraLensDirection.front,
+      );
     }
 
     await _controller!.dispose();
@@ -83,7 +101,9 @@ class CameraService {
 
     _torchEnabled = !_torchEnabled;
     try {
-      await _controller!.setFlashMode(_torchEnabled ? FlashMode.torch : FlashMode.off);
+      await _controller!.setFlashMode(
+        _torchEnabled ? FlashMode.torch : FlashMode.off,
+      );
     } catch (e) {
       debugPrint('Torch toggle error: $e');
       _torchEnabled = !_torchEnabled;
@@ -140,11 +160,19 @@ class CameraService {
   }
 
   Future<void> toggleMicState(bool enabled) async {
-    debugPrint('toggleMicState($enabled) not supported by camera plugin; control via WebRTC track.');
+    debugPrint(
+      'toggleMicState($enabled) not supported by camera plugin; control via WebRTC track.',
+    );
   }
 
   Future<void> dispose() async {
     await _controller?.dispose();
+    _controller = null;
     _isInitialized = false;
+    _torchEnabled = false;
+    _currentZoom = 1.0;
+    _maxZoom = 1.0;
+    _minExposureOffset = 0.0;
+    _maxExposureOffset = 0.0;
   }
 }

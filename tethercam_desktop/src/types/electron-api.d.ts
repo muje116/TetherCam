@@ -31,6 +31,25 @@ declare global {
     status?: string;
   }
 
+  interface StreamStats {
+    fps?: number;
+    jitterMs?: number;
+    bitrate?: number;
+    packetLoss?: number;
+  }
+
+  interface SdpOfferEvent {
+    deviceId?: string;
+    clientIp?: string;
+    sdp: string;
+  }
+
+  interface IceCandidateEvent {
+    deviceId?: string;
+    clientIp?: string;
+    candidate: RTCIceCandidateInit;
+  }
+
   interface DiscoveredPhone {
     name: string;
     ip: string;
@@ -51,14 +70,13 @@ declare global {
     enableUsbForwarding: (deviceId: string) => Promise<boolean>;
     launchPhoneApp: (deviceId: string) => Promise<boolean>;
     getDiagnosticLogs: () => Promise<string[]>;
-    sendCommand: (deviceId: string, command: string, payload?: unknown) => Promise<void>;
+    sendCommand: (deviceId: string, command: string, payload?: unknown) => Promise<boolean>;
     startVirtualCamera: (deviceId: string, offer: string) => Promise<string>;
     stopVirtualCamera: () => Promise<boolean>;
     captureSnapshot: (deviceId: string) => Promise<boolean>;
     saveSnapshot: (dataUrl: string) => Promise<string>;
     getPendingOffer: (deviceId: string) => Promise<{ sdp: string; clientIp: string } | null>;
     clearPendingOffer: (deviceId: string) => Promise<void>;
-    debugLog: (payload: Record<string, unknown>) => Promise<void>;
     getDiscoveredDevices: () => Promise<DiscoveredPhone[]>;
     scanForDevices: () => Promise<DiscoveredPhone[]>;
     invitePhone: (phoneIp: string) => Promise<{ ok: boolean; error?: string }>;
@@ -72,9 +90,9 @@ declare global {
     onDeviceDiscovered: (callback: (device: DiscoveredPhone) => void) => () => void;
     onDeviceDisconnected: (callback: (deviceId: string) => void) => () => void;
     onDeviceUpdated: (callback: (device: DeviceInfo) => void) => () => void;
-    onStreamStats: (callback: (stats: any) => void) => () => void;
-    onSdpOffer: (callback: (data: { deviceId?: string; clientIp?: string; sdp: string }) => void) => () => void;
-    onIceCandidate: (callback: (data: { deviceId?: string; clientIp?: string; candidate: RTCIceCandidateInit }) => void) => () => void;
+    onStreamStats: (callback: (stats: StreamStats) => void) => () => void;
+    onSdpOffer: (callback: (data: SdpOfferEvent) => void) => () => void;
+    onIceCandidate: (callback: (data: IceCandidateEvent) => void) => () => void;
     onDiagnosticLog: (callback: (line: string) => void) => () => void;
     onCaptureSnapshotRequest: (callback: (deviceId: string) => void) => () => void;
   }

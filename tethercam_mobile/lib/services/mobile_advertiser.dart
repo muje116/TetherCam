@@ -23,7 +23,8 @@ class MobileAdvertiser {
           'role': 'mobile',
           'ip': ipAddress,
           'app': 'TetherCam',
-          if (bluetoothAddress != null && bluetoothAddress.isNotEmpty) 'bt': bluetoothAddress,
+          if (bluetoothAddress != null && bluetoothAddress.isNotEmpty)
+            'bt': bluetoothAddress,
         },
       );
 
@@ -33,6 +34,8 @@ class MobileAdvertiser {
       debugPrint('[MobileAdvertiser] Broadcasting $deviceName at $ipAddress');
     } catch (e) {
       debugPrint('[MobileAdvertiser] Failed: $e');
+      _broadcast = null;
+      _running = false;
     }
   }
 

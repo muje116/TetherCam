@@ -8,17 +8,17 @@ import { MediaPipeline } from './server/media-pipeline.js';
 import { UsbService } from './server/usb-service.js';
 import { getConnectionUrl as resolveConnectionUrl, getAllLocalAddresses } from './server/network-utils.js';
 import { invitePhoneViaWifi, probePhone } from './server/invite-client.js';
-import { writeDebugLog } from './debug-log.js';
 
 let _dirname = '';
 try {
   _dirname = __dirname;
-} catch (e) {
+  } catch {
   _dirname = path.dirname(fileURLToPath(import.meta.url));
 }
 
 let mainWindow: BrowserWindow | null = null;
 let projectorWindow: BrowserWindow | null = null;
+let projectorDeviceId: string | null = null;
 let tray: Tray | null = null;
 let signalingServer: SignalingServer | null = null;
 let connectionManager: ConnectionManager | null = null;
@@ -170,7 +170,7 @@ function setupIpcHandlers() {
   });
 
   ipcMain.handle('send-command', (_event, deviceId: string, command: string, payload: unknown) => {
-    return connectionManager?.sendCommand(deviceId, command, payload);
+    return connectionManager?.sendCommand(deviceId, command, payload) ?? false;
   });
 
   ipcMain.handle('disconnect-device', (_event, deviceId: string) => {
@@ -247,16 +247,15 @@ function setupIpcHandlers() {
     signalingServer?.clearPendingOffer(deviceId);
   });
 
-  ipcMain.handle('debug-log', (_event, payload: Record<string, unknown>) => {
-    writeDebugLog(payload);
-  });
-
   ipcMain.handle('get-discovered-devices', () => {
     return discoveryService?.getDiscoveredDevices() ?? [];
   });
 
-  ipcMain.handle('scan-for-devices', () => {
+  ipcMain.handle('scan-for-devices', async () => {
     discoveryService?.triggerScan();
+    // mDNS responses arrive asynchronously. Give the network a short window
+    // to deliver the current scan before returning the snapshot to the UI.
+    await new Promise((resolve) => setTimeout(resolve, 750));
     return discoveryService?.getDiscoveredDevices() ?? [];
   });
 
@@ -280,9 +279,24 @@ function setupIpcHandlers() {
   // Projector Window Management IPCs
   ipcMain.handle('open-projector', (_event, deviceId: string) => {
     if (projectorWindow) {
+      if (projectorDeviceId !== deviceId) {
+        projectorDeviceId = deviceId;
+        const target = process.env.VITE_DEV_SERVER_URL
+          ? `${process.env.VITE_DEV_SERVER_URL}?projector=true&deviceId=${encodeURIComponent(deviceId)}`
+          : new URL(`file://${path.join(_dirname, '../dist/index.html')}`);
+        if (target instanceof URL) {
+          target.searchParams.set('projector', 'true');
+          target.searchParams.set('deviceId', deviceId);
+          void projectorWindow.loadURL(target.toString());
+        } else {
+          void projectorWindow.loadURL(target);
+        }
+      }
       projectorWindow.focus();
       return;
     }
+
+    projectorDeviceId = deviceId;
 
     projectorWindow = new BrowserWindow({
       width: 640,
@@ -312,6 +326,7 @@ function setupIpcHandlers() {
 
     projectorWindow.on('closed', () => {
       projectorWindow = null;
+      projectorDeviceId = null;
     });
   });
 
@@ -319,6 +334,7 @@ function setupIpcHandlers() {
     if (projectorWindow) {
       projectorWindow.close();
       projectorWindow = null;
+      projectorDeviceId = null;
     }
   });
 
@@ -386,6 +402,8 @@ app.on('activate', () => {
 
 app.on('before-quit', () => {
   signalingServer?.stop();
+  discoveryService?.stop();
+  mediaPipeline?.stop();
   tray?.destroy();
   tray = null;
 });
